@@ -1,0 +1,687 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#fdf2f8">
+    <title>旅遊記帳與條碼管理系統</title>
+
+    <!-- PWA -->
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="icons/icon-192.png">
+    <link rel="icon" href="icons/icon-192.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3.4.27/dist/vue.global.prod.js"></script>
+    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+    <script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+
+    <style>
+        body { background: linear-gradient(160deg, #fdf2f8 0%, #fce7f3 45%, #fbcfe8 100%); }
+        .glass-card { background: rgba(255,255,255,.75); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+        #reader, #reader video { border-radius: 12px; overflow: hidden; }
+        input, select { background: #fff; }
+    </style>
+</head>
+<body class="min-h-screen text-gray-800 antialiased">
+
+<div id="app" class="max-w-md mx-auto p-4 pb-24 min-h-screen relative">
+<template v-if="bookSettings">
+
+    <!-- ───── 頂部控制列 ───── -->
+    <div class="flex justify-between items-center mb-2">
+        <button @click="toggleScanner" class="text-xs bg-pink-600 text-white px-3 py-1.5 rounded-full flex items-center gap-1 shadow-sm">
+            <span class="material-icons text-xs">qr_code_scanner</span>
+            {{ isScanning ? '關閉相機' : '掃條碼記帳' }}
+        </button>
+        <button v-if="!user" @click="showLoginModal = true" class="text-xs bg-white/50 px-2 py-1 rounded-full flex items-center gap-1 hover:bg-white/80">
+            <span class="material-icons text-xs">admin_panel_settings</span> 管理登入
+        </button>
+        <div v-else class="flex items-center gap-1.5">
+            <button @click="openAdminPanel" class="text-xs bg-purple-500 text-white px-2 py-1 rounded-full flex items-center gap-1">
+                <span class="material-icons text-xs">settings</span> 後台
+            </button>
+            <button @click="downloadExcel" class="text-xs bg-blue-500 text-white px-2 py-1 rounded-full flex items-center gap-1">
+                <span class="material-icons text-xs">file_download</span> Excel
+            </button>
+            <button @click="logout" class="text-xs bg-gray-500 text-white px-2 py-1 rounded-full">登出</button>
+        </div>
+    </div>
+
+    <!-- ───── 掃描區 ───── -->
+    <div v-show="isScanning" class="mb-4 p-2 glass-card rounded-2xl border border-white/50 shadow-md">
+        <div id="reader" class="w-full"></div>
+        <p class="text-center text-[10px] text-gray-500 mt-1">支援商品一維條碼（EAN/UPC/Code128）與 QR Code</p>
+    </div>
+
+    <!-- ───── 標題（含可更換 Logo）───── -->
+    <div class="mb-3 pt-2">
+        <div class="flex items-center justify-between">
+            <h1 class="text-2xl font-bold tracking-wider flex items-center gap-2">
+                <img :src="bookSettings.logo || 'icons/logo.png'" class="w-9 h-9 rounded-xl shadow-sm object-cover" alt="logo">
+                {{ bookSettings.title }}
+            </h1>
+            <span class="px-3 py-1 text-xs rounded-full bg-white/60 font-medium shadow-sm">{{ bookSettings.tag }}</span>
+        </div>
+        <p class="text-xs text-gray-600 mt-1">{{ bookSettings.start_date }} — {{ bookSettings.end_date }}</p>
+    </div>
+
+    <!-- ───── 即時匯率列 ───── -->
+    <div class="glass-card rounded-[14px] border border-white/40 shadow-sm px-3 py-2 mb-4 flex items-center justify-between text-[11px]">
+        <div class="flex items-center gap-1 text-gray-600">
+            <span class="material-icons text-[14px] text-pink-500">currency_exchange</span>
+            <template v-if="rates[rateCurrency]">
+                NT$1 ≒ {{ currencyMeta[rateCurrency].symbol }}{{ rates[rateCurrency].toFixed(rateCurrency === 'KRW' || rateCurrency === 'VND' ? 1 : 3) }}
+                <span class="text-gray-400 ml-1">{{ ratesDate ? '（' + ratesDate + '）' : '' }}</span>
+            </template>
+            <template v-else>匯率載入中…</template>
+        </div>
+        <select v-model="rateCurrency" class="text-[11px] border rounded-lg px-1.5 py-0.5">
+            <option v-for="c in foreignCurrencies" :key="c" :value="c">{{ currencyMeta[c].flag }} {{ c }} {{ currencyMeta[c].name }}</option>
+        </select>
+    </div>
+
+    <!-- ───── 看板 ───── -->
+    <div class="grid grid-cols-2 gap-3 mb-4">
+        <div class="glass-card p-4 rounded-[16px] shadow-sm border border-white/40">
+            <p class="text-xs text-gray-500 font-medium">旅費總計（含行前）</p>
+            <p class="text-xl font-bold mt-1 text-pink-600">{{ displayMoney(totalTwd) }}</p>
+        </div>
+        <div class="glass-card p-4 rounded-[16px] shadow-sm border border-white/40">
+            <p class="text-xs text-gray-500 font-medium">扣除醫美後</p>
+            <p class="text-xl font-bold mt-1 text-pink-600">{{ displayMoney(totalTwdNoMedical) }}</p>
+        </div>
+    </div>
+
+    <!-- ───── 新增 / 編輯表單（登入後常駐；掃描後任何人可見但需登入才能存）───── -->
+    <div v-if="user || showQuickForm" class="glass-card p-4 rounded-[16px] shadow-md border border-white/60 mb-6">
+        <h3 class="text-sm font-bold mb-3 flex items-center gap-1">
+            <span class="material-icons text-sm">{{ editingId ? 'edit' : 'add_circle' }}</span>
+            <template v-if="editingId">編輯項目</template>
+            <template v-else-if="form.barcode">掃描到條碼：{{ form.barcode }}<span v-if="scanHint" class="text-[10px] text-green-600 font-normal ml-1">{{ scanHint }}</span></template>
+            <template v-else>新增消費項目</template>
+        </h3>
+        <div class="grid grid-cols-2 gap-2 text-xs">
+            <input v-model="form.item_name" placeholder="項目名稱（支援 Emoji 🍓）" class="p-2 rounded border col-span-2">
+            <input v-model="form.expense_date" type="date" class="p-2 rounded border">
+            <input v-model="form.day_theme" placeholder="當日主題（如：市區探索 🌸）" class="p-2 rounded border">
+            <input v-model.number="form.amount" type="number" inputmode="decimal" placeholder="金額" class="p-2 rounded border">
+            <select v-model="form.currency" class="p-2 rounded border">
+                <option v-for="(m, c) in currencyMeta" :key="c" :value="c">{{ m.flag }} {{ c }} {{ m.name }}</option>
+            </select>
+            <input v-model.number="form.amount_twd" type="number" inputmode="decimal"
+                   :placeholder="form.currency === 'TWD' ? '台幣金額（同左）' : '台幣金額（留空自動換算）'"
+                   class="p-2 rounded border">
+            <select v-model="form.category" class="p-2 rounded border">
+                <option v-for="c in categories" :key="c.id" :value="c.name">{{ c.icon }} {{ c.name }}</option>
+            </select>
+            <div class="col-span-2 flex items-center gap-4 py-1">
+                <label class="flex items-center gap-1"><input type="checkbox" v-model="form.is_prepaid"> 行前費用</label>
+                <label class="flex items-center gap-1"><input type="checkbox" v-model="form.is_medical"> 醫美項目</label>
+            </div>
+            <p v-if="!user" class="col-span-2 text-[11px] text-orange-500">⚠ 需要管理登入才能儲存項目</p>
+            <button @click="saveItem" :disabled="saving" class="col-span-2 bg-pink-500 text-white p-2 rounded font-bold disabled:opacity-50">
+                {{ saving ? '儲存中…' : (editingId ? '儲存修改' : '確認新增項目') }}
+            </button>
+            <button v-if="editingId || showQuickForm" @click="resetForm" class="col-span-2 border p-2 rounded">取消</button>
+        </div>
+    </div>
+
+    <!-- ───── Tabs ───── -->
+    <div class="flex gap-2 mb-3 bg-white/40 p-1 rounded-full shadow-inner">
+        <button @click="currentTab = 'detail'"  :class="['w-1/2 py-2 text-sm font-medium rounded-full transition-all', currentTab === 'detail'  ? 'bg-pink-500 text-white shadow' : 'text-gray-600']">📅 每日明細</button>
+        <button @click="currentTab = 'summary'" :class="['w-1/2 py-2 text-sm font-medium rounded-full transition-all', currentTab === 'summary' ? 'bg-pink-500 text-white shadow' : 'text-gray-600']">📊 分類總結</button>
+    </div>
+
+    <!-- 每日明細的顯示幣別（預設台幣）-->
+    <div v-if="currentTab === 'detail'" class="flex justify-end items-center gap-1 mb-2 text-[11px] text-gray-600">
+        顯示幣別
+        <select v-model="displayCurrency" class="border rounded-lg px-1.5 py-0.5 text-[11px]">
+            <option value="TWD">🇹🇼 TWD 台幣（預設）</option>
+            <option v-for="c in foreignCurrencies" :key="'d'+c" :value="c">{{ currencyMeta[c].flag }} {{ c }} {{ currencyMeta[c].name }}</option>
+        </select>
+    </div>
+
+    <!-- ───── 每日明細 ───── -->
+    <div v-if="currentTab === 'detail'" class="space-y-3">
+        <div v-for="group in groupedExpenses" :key="group.key" class="glass-card rounded-[16px] shadow-sm border border-white/40 overflow-hidden">
+            <div @click="toggleGroup(group.key)" class="p-4 flex items-center justify-between cursor-pointer">
+                <div class="flex items-center gap-3">
+                    <span class="text-xl">{{ group.icon }}</span>
+                    <div>
+                        <h3 class="font-bold text-gray-800 flex items-center gap-2">
+                            {{ group.label }}
+                            <span v-if="group.theme" class="text-[10px] px-1.5 py-0.5 rounded bg-pink-100/80 text-pink-600 font-medium">{{ group.theme }}</span>
+                            <button v-if="user && group.key !== 'prepaid'" @click.stop="editDayTheme(group)" class="text-gray-300 hover:text-pink-500">
+                                <span class="material-icons text-[14px]">edit</span>
+                            </button>
+                        </h3>
+                        <p class="text-xs text-gray-400">{{ group.items.length }} 筆消費</p>
+                    </div>
+                </div>
+                <div class="text-right flex items-center gap-2">
+                    <div>
+                        <p class="font-bold text-pink-600">{{ displayMoney(group.twd_sum) }}</p>
+                        <p v-if="displayCurrency === 'TWD' && group.local_sum" class="text-[10px] text-gray-400">{{ group.local_label }}</p>
+                    </div>
+                    <span class="material-icons text-gray-400 transition-transform" :class="{'rotate-180': openGroups[group.key]}">expand_more</span>
+                </div>
+            </div>
+            <div v-show="openGroups[group.key]" class="border-t border-gray-100/50 bg-white/40 px-4 py-2">
+                <div v-for="item in group.items" :key="item.id" class="flex justify-between items-center py-2 text-sm border-b border-gray-100/60 last:border-none">
+                    <div class="flex items-center gap-1 flex-wrap">
+                        <span class="text-[10px] px-1.5 py-0.5 rounded bg-pink-100 text-pink-600" v-if="item.is_medical">醫美</span>
+                        <span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">{{ catIcon(item.category) }} {{ item.category }}</span>
+                        <span class="text-gray-700">{{ item.item_name }}</span>
+                    </div>
+                    <div class="flex items-center gap-2 text-right shrink-0">
+                        <div>
+                            <span class="font-medium block">{{ displayMoney(item.amount_twd) }}</span>
+                            <span v-if="item.currency !== 'TWD' && item.amount" class="text-[10px] text-gray-400">
+                                {{ currencyMeta[item.currency]?.symbol || item.currency }}{{ formatNumber(item.amount) }}
+                            </span>
+                        </div>
+                        <template v-if="user">
+                            <button @click="startEdit(item)" class="text-gray-300 hover:text-pink-500"><span class="material-icons text-lg">edit</span></button>
+                            <button @click="deleteItem(item.id)" class="text-red-300 hover:text-red-600"><span class="material-icons text-lg">delete</span></button>
+                        </template>
+                    </div>
+                </div>
+                <p class="text-right text-sm py-2 text-gray-500">小計 <span class="font-bold text-pink-600">{{ displayMoney(group.twd_sum) }}</span></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ───── 分類總結 ───── -->
+    <div v-if="currentTab === 'summary'" class="space-y-4">
+        <div class="glass-card p-4 rounded-[16px] shadow-sm border border-white/40 space-y-3">
+            <h3 class="text-sm font-bold flex items-center gap-1">📊 分類統計</h3>
+            <div v-for="row in categorySummary" :key="row.cat" class="space-y-1">
+                <div class="flex justify-between text-sm">
+                    <span>{{ catIcon(row.cat) }} {{ row.cat }}</span>
+                    <span class="font-bold text-pink-600">NT$ {{ formatNumber(row.amount) }} <span class="text-[10px] text-gray-400 font-normal">({{ row.pct }}%)</span></span>
+                </div>
+                <div class="w-full bg-gray-200/50 h-2 rounded-full overflow-hidden">
+                    <div class="bg-pink-500 h-full rounded-full" :style="{ width: row.pct + '%' }"></div>
+                </div>
+            </div>
+        </div>
+        <div class="glass-card p-4 rounded-[16px] shadow-sm border border-white/40 space-y-2">
+            <h3 class="text-sm font-bold flex items-center gap-1">📆 每日花費</h3>
+            <div v-for="g in groupedExpenses" :key="'s-'+g.key" class="flex justify-between text-sm py-1 border-b border-gray-100/60 last:border-none">
+                <span>{{ g.icon }} {{ g.label }} <span class="text-gray-400 text-xs">{{ g.theme }}</span></span>
+                <span class="font-bold text-pink-600">NT$ {{ formatNumber(g.twd_sum) }}</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- ───── 燈箱：Supabase Auth 登入 ───── -->
+    <div v-if="showLoginModal" class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div class="bg-white p-6 rounded-2xl max-w-sm w-full shadow-lg">
+            <h2 class="text-lg font-bold mb-4 flex items-center gap-1"><span class="material-icons">lock</span> 管理者登入</h2>
+            <div class="space-y-3">
+                <input v-model="loginEmail" type="email" placeholder="管理員 Email" class="w-full p-2.5 border rounded-lg text-sm">
+                <input v-model="loginPass" type="password" placeholder="密碼" class="w-full p-2.5 border rounded-lg text-sm" @keyup.enter="handleLogin">
+                <p v-if="loginError" class="text-xs text-red-500 font-medium">{{ loginError }}</p>
+                <div class="flex gap-2 pt-2">
+                    <button @click="showLoginModal = false" class="w-1/2 border py-2 rounded-lg text-sm">取消</button>
+                    <button @click="handleLogin" class="w-1/2 bg-pink-500 text-white py-2 rounded-lg text-sm font-bold">登入</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ───── 燈箱：後台設定 ───── -->
+    <div v-if="showAdminPanel" class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-start justify-center z-50 p-4 overflow-y-auto">
+        <div class="bg-white p-6 rounded-2xl max-w-sm w-full shadow-lg my-8 space-y-5">
+            <h2 class="text-lg font-bold flex items-center gap-1"><span class="material-icons">settings</span> 後台設定</h2>
+
+            <!-- 帳本資訊 -->
+            <div class="space-y-2 text-xs">
+                <p class="font-bold text-gray-600">帳本資訊（支援 Emoji）</p>
+                <input v-model="settingsForm.title" placeholder="帳本標題" class="w-full p-2 border rounded-lg">
+                <input v-model="settingsForm.tag" placeholder="標籤（如：2026 春 🌸）" class="w-full p-2 border rounded-lg">
+                <div class="flex gap-2">
+                    <input v-model="settingsForm.start_date" type="date" class="w-1/2 p-2 border rounded-lg">
+                    <input v-model="settingsForm.end_date" type="date" class="w-1/2 p-2 border rounded-lg">
+                </div>
+            </div>
+
+            <!-- Logo 更換 -->
+            <div class="space-y-2 text-xs">
+                <p class="font-bold text-gray-600">首頁 Logo（不限大小規格，自動縮放）</p>
+                <div class="flex items-center gap-3">
+                    <img :src="settingsForm.logo || 'icons/logo.png'" class="w-14 h-14 rounded-xl object-cover border">
+                    <label class="bg-pink-100 text-pink-600 px-3 py-2 rounded-lg cursor-pointer font-bold">
+                        選擇圖片
+                        <input type="file" accept="image/*" class="hidden" @change="onLogoPick">
+                    </label>
+                    <button v-if="settingsForm.logo" @click="settingsForm.logo = null" class="text-gray-400 underline">還原預設</button>
+                </div>
+            </div>
+
+            <!-- 分類管理 -->
+            <div class="space-y-2 text-xs">
+                <p class="font-bold text-gray-600">消費分類（Emoji 圖示 + 名稱，皆可編輯）</p>
+                <div v-for="c in categories" :key="c.id" class="flex items-center gap-1.5">
+                    <input v-model="c.icon" class="w-12 p-1.5 border rounded-lg text-center" maxlength="4">
+                    <input v-model="c.name" class="flex-1 p-1.5 border rounded-lg">
+                    <button @click="saveCategory(c)" class="text-green-500"><span class="material-icons text-lg">check_circle</span></button>
+                    <button @click="deleteCategory(c)" class="text-red-300"><span class="material-icons text-lg">remove_circle</span></button>
+                </div>
+                <div class="flex items-center gap-1.5">
+                    <input v-model="newCat.icon" placeholder="🆕" class="w-12 p-1.5 border rounded-lg text-center" maxlength="4">
+                    <input v-model="newCat.name" placeholder="新增分類名稱" class="flex-1 p-1.5 border rounded-lg">
+                    <button @click="addCategory" class="text-pink-500"><span class="material-icons text-lg">add_circle</span></button>
+                </div>
+            </div>
+
+            <!-- 修改密碼（Supabase Auth）-->
+            <div class="space-y-2 text-xs">
+                <p class="font-bold text-gray-600">修改登入密碼</p>
+                <div class="flex gap-2">
+                    <input v-model="newPass" type="password" placeholder="新密碼（至少 6 碼）" class="flex-1 p-2 border rounded-lg">
+                    <button @click="changePassword" class="bg-purple-500 text-white px-3 rounded-lg font-bold">更新</button>
+                </div>
+            </div>
+
+            <div class="flex gap-2 pt-1">
+                <button @click="showAdminPanel = false" class="w-1/2 border py-2 rounded-lg text-sm">關閉</button>
+                <button @click="saveSettings" class="w-1/2 bg-pink-500 text-white py-2 rounded-lg text-sm font-bold">儲存帳本設定</button>
+            </div>
+        </div>
+    </div>
+
+</template>
+<div v-else class="text-center pt-32 text-gray-400 text-sm">資料載入中…</div>
+</div>
+
+<script>
+/* ════════ 1. Supabase 連線（換成你自己的）════════ */
+const SUPABASE_URL = 'https://你的專案ID.supabase.co';
+const SUPABASE_KEY = '你的anon公開金鑰';
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+/* ════════ 2. 幣別清單（要加幣別在這裡加一行即可）════════ */
+const CURRENCY_META = {
+    TWD: { name: '台幣',   symbol: 'NT$', flag: '🇹🇼' },
+    KRW: { name: '韓元',   symbol: '₩',   flag: '🇰🇷' },
+    JPY: { name: '日圓',   symbol: '¥',   flag: '🇯🇵' },
+    USD: { name: '美金',   symbol: '$',   flag: '🇺🇸' },
+    EUR: { name: '歐元',   symbol: '€',   flag: '🇪🇺' },
+    CNY: { name: '人民幣', symbol: '¥',   flag: '🇨🇳' },
+    HKD: { name: '港幣',   symbol: 'HK$', flag: '🇭🇰' },
+    THB: { name: '泰銖',   symbol: '฿',   flag: '🇹🇭' },
+    VND: { name: '越南盾', symbol: '₫',   flag: '🇻🇳' },
+    SGD: { name: '新加坡幣', symbol: 'S$', flag: '🇸🇬' },
+};
+
+/* Open Food Facts 類別 → 我方分類的對照（掃到新商品時自動歸類）*/
+const OFF_CATEGORY_MAP = [
+    { match: /beverage|drink|water|juice|tea|coffee/i, cat: '餐飲',     icon: '🍜' },
+    { match: /snack|cookie|biscuit|candy|chocolate|chip|food|noodle|ramen/i, cat: '食品零食', icon: '🍓' },
+    { match: /cosmetic|beauty|skin|mask|cream|lotion|makeup/i, cat: '美妝保養', icon: '💄' },
+    { match: /medicine|pharma|vitamin|supplement/i, cat: '藥品',  icon: '💊' },
+    { match: /cloth|wear|apparel|sock|shirt/i,       cat: '服飾',  icon: '👕' },
+];
+
+const { createApp } = Vue;
+createApp({
+    data() {
+        return {
+            user: null,
+            bookSettings: null,
+            settingsForm: {},
+            expenses: [],
+            categories: [],
+            newCat: { icon: '', name: '' },
+            currentTab: 'detail',
+            openGroups: {},
+            currencyMeta: CURRENCY_META,
+            // 匯率
+            rates: { TWD: 1 },       // 1 TWD = rates[X] 單位的 X 幣
+            ratesDate: '',
+            rateCurrency: localStorage.getItem('rateCurrency') || 'KRW',     // 匯率列顯示的「當地/其他地點」
+            displayCurrency: 'TWD',  // 每日明細顯示幣別（預設台幣）
+            // 掃描
+            isScanning: false, scanner: null, showQuickForm: false, scanHint: '',
+            // 登入
+            showLoginModal: false, loginEmail: '', loginPass: '', loginError: '',
+            showAdminPanel: false, newPass: '',
+            // 表單
+            saving: false, editingId: null,
+            form: this.emptyForm(),
+        };
+    },
+    watch: {
+        rateCurrency(v) { localStorage.setItem('rateCurrency', v); },
+    },
+    computed: {
+        foreignCurrencies() { return Object.keys(CURRENCY_META).filter(c => c !== 'TWD'); },
+        totalTwd() { return this.expenses.reduce((s, e) => s + (e.amount_twd || 0), 0); },
+        totalTwdNoMedical() { return this.expenses.filter(e => !e.is_medical).reduce((s, e) => s + (e.amount_twd || 0), 0); },
+        groupedExpenses() {
+            const groups = [];
+            const prepaid = this.expenses.filter(e => e.is_prepaid);
+            if (prepaid.length) groups.push(this.makeGroup('prepaid', '行前固定費用', '', '🧾', prepaid));
+            const byDate = {};
+            this.expenses.filter(e => !e.is_prepaid).forEach(e => {
+                const d = e.expense_date || '未填日期';
+                (byDate[d] = byDate[d] || []).push(e);
+            });
+            Object.keys(byDate).sort().forEach(d => {
+                const items = byDate[d];
+                const theme = items.find(i => i.day_theme)?.day_theme || '';
+                groups.push(this.makeGroup(d, this.formatDateLabel(d), theme, this.themeIcon(theme), items));
+            });
+            return groups;
+        },
+        categorySummary() {
+            const map = {};
+            this.expenses.forEach(e => {
+                const c = e.is_prepaid ? '行前費用' : (e.category || '其他');
+                map[c] = (map[c] || 0) + (e.amount_twd || 0);
+            });
+            const total = this.totalTwd || 1;
+            return Object.entries(map)
+                .map(([cat, amount]) => ({ cat, amount, pct: (amount / total * 100).toFixed(1) }))
+                .sort((a, b) => b.amount - a.amount);
+        },
+    },
+    methods: {
+        /* ───── 小工具 ───── */
+        emptyForm() {
+            return { item_name: '', amount: null, currency: 'TWD', amount_twd: null,
+                     category: '購物', expense_date: new Date().toISOString().slice(0, 10),
+                     day_theme: '', is_prepaid: false, is_medical: false, barcode: '' };
+        },
+        resetForm() { this.form = this.emptyForm(); this.editingId = null; this.showQuickForm = false; this.scanHint = ''; },
+        formatNumber(n) { return (n || 0).toLocaleString('zh-TW'); },
+        catIcon(name) { return this.categories.find(c => c.name === name)?.icon || '📦'; },
+        formatDateLabel(d) {
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+            const dt = new Date(d + 'T00:00:00');
+            return `${dt.getMonth() + 1}/${dt.getDate()}（${'日一二三四五六'[dt.getDay()]}）`;
+        },
+        themeIcon(t) {
+            if (/醫美/.test(t)) return '💉';
+            if (/購物/.test(t)) return '🛍️';
+            if (/抵達|機場|回台|啟程/.test(t)) return '✈️';
+            if (/探索|散步|逛/.test(t)) return '🌸';
+            return '📍';
+        },
+        makeGroup(key, label, theme, icon, items) {
+            // 該組若全為同一種外幣，附註原幣小計
+            const curr = [...new Set(items.map(i => i.currency))];
+            const localSum = (curr.length === 1 && curr[0] !== 'TWD')
+                ? items.reduce((s, e) => s + (e.amount || 0), 0) : 0;
+            return {
+                key, label, theme, icon, items,
+                twd_sum: items.reduce((s, e) => s + (e.amount_twd || 0), 0),
+                local_sum: localSum,
+                local_label: localSum ? (CURRENCY_META[curr[0]]?.symbol || '') + localSum.toLocaleString() : '',
+            };
+        },
+        toggleGroup(k) { this.openGroups[k] = !this.openGroups[k]; },
+        /* 依「顯示幣別」輸出金額（內部一律以台幣為基準）*/
+        displayMoney(twd) {
+            const c = this.displayCurrency;
+            if (c === 'TWD' || !this.rates[c]) return 'NT$ ' + this.formatNumber(Math.round(twd));
+            const v = twd * this.rates[c];
+            return (CURRENCY_META[c]?.symbol || c) + ' ' + this.formatNumber(Math.round(v * 100) / 100);
+        },
+
+        /* ───── 即時匯率（open.er-api.com，免金鑰）───── */
+        async loadRates() {
+            try {
+                const r = await fetch('https://open.er-api.com/v6/latest/TWD');
+                const j = await r.json();
+                if (j && j.rates) {
+                    this.rates = j.rates; this.rates.TWD = 1;
+                    this.ratesDate = (j.time_last_update_utc || '').slice(5, 16);
+                    localStorage.setItem('ratesCache', JSON.stringify({ rates: j.rates, date: this.ratesDate }));
+                }
+            } catch (_) {
+                const cache = localStorage.getItem('ratesCache');
+                if (cache) { const c = JSON.parse(cache); this.rates = c.rates; this.ratesDate = c.date + '（快取）'; }
+            }
+        },
+        twdOf(amount, currency) {
+            if (currency === 'TWD') return amount;
+            const r = this.rates[currency];
+            return r ? Math.round(amount / r) : null;
+        },
+
+        /* ───── 資料載入 ───── */
+        async loadAll() {
+            const [{ data: settings }, { data: items }, { data: cats }] = await Promise.all([
+                supabase.from('travel_settings').select('*').limit(1).single(),
+                supabase.from('travel_expenses').select('*').order('expense_date').order('id'),
+                supabase.from('travel_categories').select('*').order('sort').order('id'),
+            ]);
+            this.bookSettings = settings;
+            this.expenses = items || [];
+            this.categories = cats || [];
+        },
+
+        /* ───── 新增 / 編輯 / 刪除 ───── */
+        async saveItem() {
+            if (!this.user) { this.showLoginModal = true; return; }
+            if (!this.form.item_name) return alert('請輸入項目名稱');
+            const f = { ...this.form };
+            if (f.currency === 'TWD' && f.amount && !f.amount_twd) f.amount_twd = f.amount;
+            if (!f.amount_twd && f.amount) {
+                const t = this.twdOf(f.amount, f.currency);
+                if (t == null) return alert('查無 ' + f.currency + ' 匯率，請手動輸入台幣金額');
+                f.amount_twd = t;
+            }
+            this.saving = true;
+            const q = this.editingId
+                ? supabase.from('travel_expenses').update(f).eq('id', this.editingId)
+                : supabase.from('travel_expenses').insert([f]);
+            const { error } = await q;
+            this.saving = false;
+            if (error) return alert('儲存失敗：' + error.message);
+            this.resetForm();
+            await this.loadAll();
+        },
+        startEdit(item) {
+            this.editingId = item.id;
+            this.form = { item_name: item.item_name, amount: item.amount, currency: item.currency || 'TWD',
+                amount_twd: item.amount_twd, category: item.category, expense_date: item.expense_date,
+                day_theme: item.day_theme, is_prepaid: item.is_prepaid, is_medical: item.is_medical,
+                barcode: item.barcode || '' };
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        },
+        async deleteItem(id) {
+            if (!confirm('確定刪除這筆消費？')) return;
+            await supabase.from('travel_expenses').delete().eq('id', id);
+            await this.loadAll();
+        },
+        async editDayTheme(group) {
+            const t = prompt('修改 ' + group.label + ' 的當日主題（支援 Emoji）', group.theme);
+            if (t === null) return;
+            await supabase.from('travel_expenses').update({ day_theme: t })
+                .eq('expense_date', group.key).eq('is_prepaid', false);
+            await this.loadAll();
+        },
+
+        /* ───── 分類管理 ───── */
+        async addCategory() {
+            if (!this.newCat.name) return;
+            await supabase.from('travel_categories').insert([{ name: this.newCat.name, icon: this.newCat.icon || '📦' }]);
+            this.newCat = { icon: '', name: '' };
+            await this.loadAll();
+        },
+        async saveCategory(c) {
+            await supabase.from('travel_categories').update({ name: c.name, icon: c.icon }).eq('id', c.id);
+            await this.loadAll();
+        },
+        async deleteCategory(c) {
+            if (!confirm('刪除分類「' + c.name + '」？（既有消費不受影響）')) return;
+            await supabase.from('travel_categories').delete().eq('id', c.id);
+            await this.loadAll();
+        },
+        /* 確保某分類存在；不存在就自動建立（掃描自動歸類用，之後可在後台改名）*/
+        async ensureCategory(name, icon) {
+            if (this.categories.some(c => c.name === name)) return name;
+            await supabase.from('travel_categories').insert([{ name, icon: icon || '📦' }]);
+            await this.loadAll();
+            return name;
+        },
+
+        /* ───── 掃描（一維條碼 + QR Code）───── */
+        async toggleScanner() {
+            if (this.isScanning) {
+                await this.scanner?.stop().catch(() => {});
+                this.scanner = null; this.isScanning = false; return;
+            }
+            this.isScanning = true;
+            await this.$nextTick();
+            const formats = [
+                Html5QrcodeSupportedFormats.QR_CODE,
+                Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8,
+                Html5QrcodeSupportedFormats.UPC_A,  Html5QrcodeSupportedFormats.UPC_E,
+                Html5QrcodeSupportedFormats.CODE_128, Html5QrcodeSupportedFormats.CODE_39,
+                Html5QrcodeSupportedFormats.ITF,
+            ];
+            this.scanner = new Html5Qrcode('reader', { formatsToSupport: formats });
+            try {
+                await this.scanner.start({ facingMode: 'environment' },
+                    { fps: 10, qrbox: { width: 250, height: 160 } },
+                    (text) => this.onScan(text), () => {});
+            } catch (e) {
+                alert('無法開啟相機：' + e + '\n請確認已允許相機權限，且網址是 https。');
+                this.isScanning = false;
+            }
+        },
+        async onScan(text) {
+            await this.scanner?.stop().catch(() => {});
+            this.scanner = null; this.isScanning = false;
+            this.editingId = null; this.scanHint = '';
+
+            /* QR Code 帶 JSON：{"name":"面膜","amt":15000,"cur":"KRW","cat":"美妝保養"} */
+            try {
+                const o = JSON.parse(text);
+                if (o && o.name) {
+                    this.form = { ...this.emptyForm(), item_name: o.name,
+                        amount: o.amt ?? o.twd ?? null,
+                        currency: o.cur || (o.twd ? 'TWD' : 'KRW'),
+                        category: o.cat || '購物' };
+                    if (this.form.amount) this.form.amount_twd = this.twdOf(this.form.amount, this.form.currency);
+                    this.showQuickForm = true; return;
+                }
+            } catch (_) {}
+
+            /* 一維商品條碼 */
+            this.form = { ...this.emptyForm(), barcode: text };
+            // 1) 以前掃過同條碼 → 直接帶入上次名稱 / 分類 / 幣別
+            const prev = this.expenses.find(e => e.barcode === text);
+            if (prev) {
+                Object.assign(this.form, { item_name: prev.item_name, category: prev.category,
+                    currency: prev.currency || 'TWD', amount: prev.amount });
+                if (this.form.amount) this.form.amount_twd = this.twdOf(this.form.amount, this.form.currency);
+                this.scanHint = '（已自動帶入上次紀錄，可修改）';
+                this.showQuickForm = true; return;
+            }
+            // 2) 查 Open Food Facts 公開商品庫 → 自動命名 + 依產品種類自動歸類
+            this.showQuickForm = true;
+            this.scanHint = '（查詢商品資料中…）';
+            try {
+                const r = await fetch(`https://world.openfoodfacts.org/api/v0/product/${encodeURIComponent(text)}.json`);
+                const j = await r.json();
+                if (j.status === 1 && j.product) {
+                    this.form.item_name = j.product.product_name || j.product.generic_name || '';
+                    const tags = (j.product.categories || '') + ' ' + (j.product.categories_tags || []).join(' ');
+                    const hit = OFF_CATEGORY_MAP.find(m => m.match.test(tags));
+                    if (hit) this.form.category = await this.ensureCategory(hit.cat, hit.icon);
+                    this.scanHint = this.form.item_name ? '（已依商品庫自動命名與歸類，可修改）' : '';
+                }
+            } catch (_) {}
+            // 3) 都查不到 → 以條碼末五碼自動建立暫名（之後可改）
+            if (!this.form.item_name) {
+                this.form.item_name = '未命名商品 ' + text.slice(-5);
+                this.scanHint = '（新商品，已自動建立暫名，可修改）';
+            }
+        },
+
+        /* ───── Supabase Auth ───── */
+        async handleLogin() {
+            this.loginError = '';
+            const { error } = await supabase.auth.signInWithPassword({
+                email: this.loginEmail, password: this.loginPass });
+            if (error) { this.loginError = '登入失敗：' + error.message; return; }
+            this.showLoginModal = false; this.loginPass = '';
+        },
+        async logout() { await supabase.auth.signOut(); },
+        async changePassword() {
+            if (!this.newPass || this.newPass.length < 6) return alert('密碼至少 6 碼');
+            const { error } = await supabase.auth.updateUser({ password: this.newPass });
+            alert(error ? '更新失敗：' + error.message : '密碼已更新');
+            if (!error) this.newPass = '';
+        },
+
+        /* ───── 後台設定 / Logo ───── */
+        openAdminPanel() {
+            this.settingsForm = { ...this.bookSettings };
+            this.showAdminPanel = true;
+        },
+        onLogoPick(ev) {
+            const file = ev.target.files[0];
+            if (!file) return;
+            // 任意大小 / 規格皆可：用 canvas 等比縮到最長邊 512px 再存（避免資料庫過大）
+            const img = new Image();
+            img.onload = () => {
+                const max = 512, scale = Math.min(1, max / Math.max(img.width, img.height));
+                const cv = document.createElement('canvas');
+                cv.width = Math.round(img.width * scale); cv.height = Math.round(img.height * scale);
+                cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+                this.settingsForm.logo = cv.toDataURL('image/png');
+            };
+            img.src = URL.createObjectURL(file);
+            ev.target.value = '';
+        },
+        async saveSettings() {
+            const { id, ...fields } = this.settingsForm;
+            const { error } = await supabase.from('travel_settings').update(fields).eq('id', id);
+            if (error) return alert('儲存失敗：' + error.message);
+            this.showAdminPanel = false;
+            await this.loadAll();
+        },
+
+        /* ───── Excel ───── */
+        downloadExcel() {
+            const rows = this.expenses.map(e => ({
+                日期: e.expense_date, 當日主題: e.day_theme, 項目: e.item_name, 分類: e.category,
+                幣別: e.currency, 原幣金額: e.amount, 台幣金額: e.amount_twd,
+                行前: e.is_prepaid ? 'V' : '', 醫美: e.is_medical ? 'V' : '', 條碼: e.barcode,
+            }));
+            const ws = XLSX.utils.json_to_sheet(rows);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, '消費明細');
+            XLSX.writeFile(wb, `${this.bookSettings.title}_記帳.xlsx`);
+        },
+    },
+    async mounted() {
+        // Auth 狀態（重新整理也會自動保持登入）
+        const { data: { session } } = await supabase.auth.getSession();
+        this.user = session?.user || null;
+        supabase.auth.onAuthStateChange((_e, s) => { this.user = s?.user || null; });
+
+        await Promise.all([this.loadAll(), this.loadRates()]);
+        supabase.channel('exp-changes')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'travel_expenses' }, () => this.loadAll())
+            .subscribe();
+    },
+}).mount('#app');
+
+/* ════════ Service Worker（PWA）════════ */
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => navigator.serviceWorker.register('service-worker.js'));
+}
+</script>
+</body>
+</html>
