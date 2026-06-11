@@ -4,7 +4,7 @@
  *  - Supabase API → 一律走網路（記帳資料必須即時，不快取）
  * 改版時請把 CACHE_NAME 的版本號 +1，舊快取會自動清除。
  */
-const CACHE_NAME = 'travel-ledger-v5';
+const CACHE_NAME = 'travel-ledger-v6';
 
 const APP_SHELL = [
   './',
@@ -43,6 +43,8 @@ self.addEventListener('fetch', (event) => {
   // Supabase 資料 / 即時匯率 / 商品條碼查詢 API：不快取，永遠走網路
   if (url.hostname.endsWith('.supabase.co') ||
       url.hostname === 'open.er-api.com' ||
+      url.hostname === 'api.open-meteo.com' ||
+      url.hostname === 'ipapi.co' ||
       url.hostname.endsWith('openfoodfacts.org')) {
     return; // 交給瀏覽器預設處理
   }

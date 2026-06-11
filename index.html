@@ -154,6 +154,24 @@
     </div>
 
     <template v-if="bookSettings">
+    <!-- ───── 日期 + 天氣列 ───── -->
+    <div class="glass-card rounded-[14px] border border-white/40 shadow-sm px-3 py-2 mb-3 flex items-center justify-between text-[11px]">
+        <div class="flex items-center gap-1 text-gray-600">
+            <span class="material-icons text-[14px] text-pink-500">event</span>
+            {{ todayLabel }}
+        </div>
+        <div class="flex items-center gap-1 text-gray-600">
+            <template v-if="weather.temp !== null">
+                <span class="text-sm">{{ weather.icon }}</span>
+                {{ weather.temp }}°C
+                <span class="text-gray-400 ml-0.5">{{ weather.loc }}</span>
+            </template>
+            <template v-else>
+                <span class="material-icons text-[14px] text-pink-500">thermostat</span> 天氣載入中…
+            </template>
+        </div>
+    </div>
+
     <!-- ───── 即時匯率列 ───── -->
     <div class="glass-card rounded-[14px] border border-white/40 shadow-sm px-3 py-2 mb-4 flex items-center justify-between text-[11px]">
         <div class="flex items-center gap-1 text-gray-600">
@@ -578,6 +596,9 @@ createApp({
             currencyMeta: CURRENCY_META,
             rates: { TWD: 1 },
             ratesDate: '',
+            // 日期 + 天氣
+            now: new Date(),
+            weather: { temp: null, icon: '', loc: '' },
             rateCurrency: localStorage.getItem('rateCurrency') || 'KRW',
             displayCurrency: 'TWD',
             // 掃描
@@ -606,6 +627,10 @@ createApp({
         currentBookId(v) { if (v) localStorage.setItem('currentBookId', v); },
     },
     computed: {
+        todayLabel() {
+            const d = this.now;
+            return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}（${'日一二三四五六'[d.getDay()]}）`;
+        },
         isAdmin() { return this.profile?.role === 'admin'; },
         isActive() { return this.isAdmin || this.profile?.status === 'active'; },
         bookSettings() { return this.books.find(b => b.id === this.currentBookId) || null; },
@@ -707,6 +732,55 @@ createApp({
             if (currency === 'TWD') return amount;
             const r = this.rates[currency];
             return r ? Math.round(amount / r) : null;
+        },
+
+        /* ───── 當地氣溫（open-meteo，免金鑰）───── */
+        weatherIcon(code) {
+            if (code === 0) return '☀️';
+            if ([1, 2].includes(code)) return '🌤️';
+            if (code === 3) return '☁️';
+            if ([45, 48].includes(code)) return '🌫️';
+            if (code >= 51 && code <= 67) return '🌧️';
+            if (code >= 71 && code <= 77) return '❄️';
+            if (code >= 80 && code <= 82) return '🌦️';
+            if (code >= 95) return '⛈️';
+            return '🌡️';
+        },
+        async fetchWeather(lat, lon, loc) {
+            try {
+                const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code`);
+                const j = await r.json();
+                if (j.current) {
+                    this.weather = {
+                        temp: Math.round(j.current.temperature_2m),
+                        icon: this.weatherIcon(j.current.weather_code),
+                        loc: loc || '',
+                    };
+                    localStorage.setItem('weatherCache', JSON.stringify(this.weather));
+                }
+            } catch (_) {}
+        },
+        loadWeather() {
+            // 先用快取墊著，避免閃爍
+            const cache = localStorage.getItem('weatherCache');
+            if (cache) { try { this.weather = JSON.parse(cache); } catch (_) {} }
+            // 1) 優先用瀏覽器定位（較準）
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    (pos) => this.fetchWeather(pos.coords.latitude, pos.coords.longitude, '所在地'),
+                    () => this.loadWeatherByIp(),   // 拒絕 / 失敗 → 用 IP 定位
+                    { timeout: 8000, maximumAge: 600000 }
+                );
+            } else {
+                this.loadWeatherByIp();
+            }
+        },
+        async loadWeatherByIp() {
+            try {
+                const r = await fetch('https://ipapi.co/json/');
+                const j = await r.json();
+                if (j.latitude) this.fetchWeather(j.latitude, j.longitude, j.city || j.country_name || '');
+            } catch (_) {}
         },
 
         /* ───── 資料載入 ───── */
@@ -1006,6 +1080,7 @@ createApp({
 
         /* ───── 啟用後載入資料 ───── */
         async afterActivated() {
+            this.loadWeather();
             await Promise.all([this.loadAll(), this.loadRates()]);
         },
 
@@ -1070,14 +1145,13 @@ createApp({
             await this.loadAdminData();
         },
         async deleteUser(u) {
-            if (!confirm('刪除使用者「' + u.username + '（' + u.email + '）」？\n⚠ 會刪除其個人資料與所有帳本 / 消費。\n（Auth 登入帳號需另在 Supabase Dashboard 移除）')) return;
-            // 刪除其帳本（消費會 cascade）、分享、profile
-            await sb.from('travel_settings').delete().eq('owner_id', u.id);
-            await sb.from('book_shares').delete().eq('owner_id', u.id);
-            await sb.from('book_shares').delete().eq('shared_with_id', u.id);
-            const { error } = await sb.from('profiles').delete().eq('id', u.id);
+            if (u.id === this.user?.id) return alert('無法刪除自己的帳號');
+            if (!confirm('刪除使用者「' + u.username + '（' + u.email + '）」？\n⚠ 會完整刪除：個人資料、所有帳本、消費紀錄、Auth 登入帳號，且無法復原！')) return;
+            const { data, error } = await sb.rpc('admin_delete_user', { p_uid: u.id });
             if (error) return alert('刪除失敗：' + error.message);
-            alert('已刪除。請記得到 Supabase → Authentication → Users 移除其登入帳號。');
+            if (data === 'not_admin') return alert('權限不足');
+            if (data === 'cannot_delete_self') return alert('無法刪除自己的帳號');
+            alert('✅ 已完整刪除「' + u.email + '」（含 Auth 登入帳號）');
             await Promise.all([this.loadAdminData(), this.loadAll()]);
         },
         async adminCancelShare(id) {
@@ -1158,6 +1232,9 @@ createApp({
             }
             this.authReady = true;
         };
+
+        // 每分鐘更新一次「今天日期」（跨午夜自動換日）
+        setInterval(() => { this.now = new Date(); }, 60000);
 
         const { data: { session } } = await sb.auth.getSession();
         await applyUser(session);
