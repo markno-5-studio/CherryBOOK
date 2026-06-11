@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="theme-color" content="#fdf2f8">
-    <title>旅遊記帳與條碼管理系統</title>
+    <title>小桃記帳｜旅遊記帳與條碼管理</title>
 
     <!-- PWA -->
     <link rel="manifest" href="manifest.json">
@@ -29,20 +29,63 @@
 <body class="min-h-screen text-gray-800 antialiased">
 
 <div id="app" class="max-w-md mx-auto p-4 pb-24 min-h-screen relative">
-<template v-if="bookSettings">
+
+<!-- ════════ 0. 載入中 ════════ -->
+<div v-if="!authReady" class="text-center pt-40 text-gray-400 text-sm">載入中…</div>
+
+<!-- ════════ A. 未登入：Logo + 申請 / 登入 ════════ -->
+<template v-else-if="!user">
+    <div class="pt-20 flex flex-col items-center text-center">
+        <img src="icons/logo.png" class="w-28 h-28 rounded-[28px] shadow-lg object-cover mb-5" alt="logo"
+             onerror="this.src='icons/icon-192.png'">
+        <h1 class="text-2xl font-bold tracking-wide mb-1">小桃記帳</h1>
+        <p class="text-xs text-gray-500 mb-8">旅遊記帳・條碼管理・多人分享</p>
+
+        <button @click="openApply" class="w-64 bg-pink-500 text-white py-3 rounded-2xl font-bold shadow-md flex items-center justify-center gap-2 mb-3">
+            <span class="material-icons text-base">person_add</span> 申請使用
+        </button>
+        <button @click="showLoginModal = true" class="w-64 bg-white/70 py-3 rounded-2xl font-medium shadow-sm flex items-center justify-center gap-2">
+            <span class="material-icons text-base">login</span> 我已有帳號，登入
+        </button>
+        <p class="text-[11px] text-gray-400 mt-6 px-8 leading-relaxed">
+            申請後請等待管理員核發「邀請碼」，<br>收到邀請碼後登入並輸入即可開始使用。
+        </p>
+    </div>
+</template>
+
+<!-- ════════ B. 已登入但尚未啟用：輸入邀請碼 ════════ -->
+<template v-else-if="!isActive">
+    <div class="pt-24 flex flex-col items-center text-center">
+        <span class="material-icons text-5xl text-pink-400 mb-3">vpn_key</span>
+        <h2 class="text-xl font-bold mb-1">輸入邀請碼啟用</h2>
+        <p class="text-xs text-gray-500 mb-6">你的申請信箱：{{ user.email }}<br>請向管理員索取邀請碼後填入。</p>
+        <input v-model="inviteInput" placeholder="例如：PINK888"
+               class="w-64 p-3 border rounded-xl text-center font-bold tracking-widest mb-3 uppercase">
+        <p v-if="inviteError" class="text-xs text-red-500 mb-2">{{ inviteError }}</p>
+        <button @click="redeemInvite" class="w-64 bg-pink-500 text-white py-3 rounded-2xl font-bold shadow-md mb-3">啟用帳號</button>
+        <button @click="logout" class="text-xs text-gray-400 underline">使用其他帳號登入</button>
+    </div>
+</template>
+
+<!-- ════════ C. 正式 App（已啟用 / 管理員）════════ -->
+<template v-else>
+<template v-if="bookSettings || isAdmin">
 
     <!-- ───── 頂部控制列 ───── -->
-    <div class="flex justify-between items-center mb-2">
+    <div class="flex justify-between items-center mb-2 flex-wrap gap-1.5">
         <button @click="toggleScanner" class="text-xs bg-pink-600 text-white px-3 py-1.5 rounded-full flex items-center gap-1 shadow-sm">
             <span class="material-icons text-xs">qr_code_scanner</span>
             {{ isScanning ? '關閉相機' : '掃條碼記帳' }}
         </button>
-        <button v-if="!user" @click="showLoginModal = true" class="text-xs bg-white/50 px-2 py-1 rounded-full flex items-center gap-1 hover:bg-white/80">
-            <span class="material-icons text-xs">admin_panel_settings</span> 管理登入
-        </button>
-        <div v-else class="flex items-center gap-1.5">
+        <div class="flex items-center gap-1.5">
+            <button v-if="isAdmin" @click="openSysPanel" class="text-xs bg-indigo-500 text-white px-2 py-1 rounded-full flex items-center gap-1">
+                <span class="material-icons text-xs">manage_accounts</span> 管理後台
+            </button>
+            <button @click="openShare" class="text-xs bg-teal-500 text-white px-2 py-1 rounded-full flex items-center gap-1">
+                <span class="material-icons text-xs">share</span> 分享
+            </button>
             <button @click="openAdminPanel" class="text-xs bg-purple-500 text-white px-2 py-1 rounded-full flex items-center gap-1">
-                <span class="material-icons text-xs">settings</span> 後台
+                <span class="material-icons text-xs">settings</span> 設定
             </button>
             <button @click="downloadExcel" class="text-xs bg-blue-500 text-white px-2 py-1 rounded-full flex items-center gap-1">
                 <span class="material-icons text-xs">file_download</span> Excel
@@ -50,26 +93,46 @@
             <button @click="logout" class="text-xs bg-gray-500 text-white px-2 py-1 rounded-full">登出</button>
         </div>
     </div>
+    <p class="text-[11px] text-gray-500 mb-2">👤 {{ profile?.username }}（{{ user.email }}）{{ isAdmin ? '・管理員' : '' }}</p>
 
     <!-- ───── 帳本 / 專案 切換 ───── -->
-    <div v-if="books.length" class="flex items-center gap-2 mb-3">
+    <div class="flex items-center gap-2 mb-3">
         <span class="material-icons text-pink-500 text-lg shrink-0">menu_book</span>
-        <select v-model="currentBookId" class="flex-1 text-sm font-medium border rounded-lg px-2 py-1.5 bg-white/70 shadow-sm">
-            <option v-for="b in books" :key="b.id" :value="b.id">{{ b.title }}</option>
+        <select v-if="books.length" v-model="currentBookId" class="flex-1 text-sm font-medium border rounded-lg px-2 py-1.5 bg-white/70 shadow-sm">
+            <option v-for="b in books" :key="b.id" :value="b.id">
+                {{ b.title }}{{ b.owner_id !== user.id ? '（共享）' : '' }}
+            </option>
         </select>
-        <button v-if="user" @click="addBook" class="text-xs bg-pink-500 text-white px-2.5 py-1.5 rounded-lg flex items-center gap-1 shrink-0 shadow-sm">
+        <span v-else class="flex-1 text-xs text-gray-400">尚無帳本，點右側新增 →</span>
+        <button @click="addBook" class="text-xs bg-pink-500 text-white px-2.5 py-1.5 rounded-lg flex items-center gap-1 shrink-0 shadow-sm">
             <span class="material-icons text-xs">add</span> 新增帳本
         </button>
     </div>
 
+    <!-- 被分享的帳本唯讀提示 -->
+    <p v-if="bookSettings && bookSettings.owner_id !== user.id && !isAdmin"
+       class="text-[11px] text-orange-500 mb-2 flex items-center gap-1">
+        <span class="material-icons text-xs">visibility</span> 這是別人分享給你的帳本，僅能檢視、無法修改。
+    </p>
+
     <!-- ───── 掃描區 ───── -->
     <div v-show="isScanning" class="mb-4 p-2 glass-card rounded-2xl border border-white/50 shadow-md">
         <div id="reader" class="w-full"></div>
-        <p class="text-center text-[10px] text-gray-500 mt-1">支援商品一維條碼（EAN/UPC/Code128）與 QR Code</p>
+        <div class="flex items-center justify-center gap-2 mt-2">
+            <span class="text-[11px] text-gray-500">掃描模式</span>
+            <div class="flex bg-white/60 rounded-full p-0.5 text-[11px]">
+                <button v-for="m in scanModes" :key="m.v" @click="setScanMode(m.v)"
+                        :class="['px-3 py-1 rounded-full', scanMode === m.v ? 'bg-pink-500 text-white' : 'text-gray-600']">
+                    {{ m.label }}
+                </button>
+            </div>
+        </div>
+        <p class="text-center text-[10px] text-gray-500 mt-1">一維：EAN/UPC/Code128｜二維：QR Code</p>
     </div>
 
+    <template v-if="canWrite">
     <!-- ───── 標題（含可更換 Logo）───── -->
-    <div class="mb-3 pt-2">
+    <div v-if="bookSettings" class="mb-3 pt-2">
         <div class="flex items-center justify-between">
             <h1 class="text-2xl font-bold tracking-wider flex items-center gap-2">
                 <img :src="bookSettings.logo || 'icons/logo.png'" class="w-9 h-9 rounded-xl shadow-sm object-cover" alt="logo">
@@ -79,7 +142,13 @@
         </div>
         <p class="text-xs text-gray-600 mt-1">{{ bookSettings.start_date }} — {{ bookSettings.end_date }}</p>
     </div>
+    </template>
+    <div v-else-if="bookSettings" class="mb-3 pt-2 flex items-center gap-2">
+        <img :src="bookSettings.logo || 'icons/logo.png'" class="w-9 h-9 rounded-xl shadow-sm object-cover" alt="logo">
+        <h1 class="text-2xl font-bold tracking-wider">{{ bookSettings.title }}</h1>
+    </div>
 
+    <template v-if="bookSettings">
     <!-- ───── 即時匯率列 ───── -->
     <div class="glass-card rounded-[14px] border border-white/40 shadow-sm px-3 py-2 mb-4 flex items-center justify-between text-[11px]">
         <div class="flex items-center gap-1 text-gray-600">
@@ -107,13 +176,13 @@
         </div>
     </div>
 
-    <!-- ───── 新增 / 編輯表單（登入後常駐；掃描後任何人可見但需登入才能存）───── -->
-    <div v-if="user || showQuickForm" class="glass-card p-4 rounded-[16px] shadow-md border border-white/60 mb-6">
+    <!-- ───── 新增 / 編輯表單（可寫入者可見；含手動輸入）───── -->
+    <div v-if="canWrite || showQuickForm" class="glass-card p-4 rounded-[16px] shadow-md border border-white/60 mb-6">
         <h3 class="text-sm font-bold mb-3 flex items-center gap-1">
             <span class="material-icons text-sm">{{ editingId ? 'edit' : 'add_circle' }}</span>
             <template v-if="editingId">編輯項目</template>
             <template v-else-if="form.barcode">掃描到條碼：{{ form.barcode }}<span v-if="scanHint" class="text-[10px] text-green-600 font-normal ml-1">{{ scanHint }}</span></template>
-            <template v-else>新增消費項目</template>
+            <template v-else>手動新增消費項目</template>
         </h3>
         <div class="grid grid-cols-2 gap-2 text-xs">
             <input v-model="form.item_name" placeholder="項目名稱（支援 Emoji 🍓）" class="p-2 rounded border col-span-2">
@@ -133,7 +202,6 @@
                 <label class="flex items-center gap-1"><input type="checkbox" v-model="form.is_prepaid"> 行前費用</label>
                 <label class="flex items-center gap-1"><input type="checkbox" v-model="form.is_medical"> 醫美項目</label>
             </div>
-            <p v-if="!user" class="col-span-2 text-[11px] text-orange-500">⚠ 需要管理登入才能儲存項目</p>
             <button @click="saveItem" :disabled="saving" class="col-span-2 bg-pink-500 text-white p-2 rounded font-bold disabled:opacity-50">
                 {{ saving ? '儲存中…' : (editingId ? '儲存修改' : '確認新增項目') }}
             </button>
@@ -147,7 +215,6 @@
         <button @click="currentTab = 'summary'" :class="['w-1/2 py-2 text-sm font-medium rounded-full transition-all', currentTab === 'summary' ? 'bg-pink-500 text-white shadow' : 'text-gray-600']">📊 分類總結</button>
     </div>
 
-    <!-- 每日明細的顯示幣別（預設台幣）-->
     <div v-if="currentTab === 'detail'" class="flex justify-end items-center gap-1 mb-2 text-[11px] text-gray-600">
         顯示幣別
         <select v-model="displayCurrency" class="border rounded-lg px-1.5 py-0.5 text-[11px]">
@@ -166,7 +233,7 @@
                         <h3 class="font-bold text-gray-800 flex items-center gap-2">
                             {{ group.label }}
                             <span v-if="group.theme" class="text-[10px] px-1.5 py-0.5 rounded bg-pink-100/80 text-pink-600 font-medium">{{ group.theme }}</span>
-                            <button v-if="user && group.key !== 'prepaid'" @click.stop="editDayTheme(group)" class="text-gray-300 hover:text-pink-500">
+                            <button v-if="canWrite && group.key !== 'prepaid'" @click.stop="editDayTheme(group)" class="text-gray-300 hover:text-pink-500">
                                 <span class="material-icons text-[14px]">edit</span>
                             </button>
                         </h3>
@@ -195,7 +262,7 @@
                                 {{ currencyMeta[item.currency]?.symbol || item.currency }}{{ formatNumber(item.amount) }}
                             </span>
                         </div>
-                        <template v-if="user">
+                        <template v-if="canWrite">
                             <button @click="startEdit(item)" class="text-gray-300 hover:text-pink-500"><span class="material-icons text-lg">edit</span></button>
                             <button @click="deleteItem(item.id)" class="text-red-300 hover:text-red-600"><span class="material-icons text-lg">delete</span></button>
                         </template>
@@ -204,6 +271,7 @@
                 <p class="text-right text-sm py-2 text-gray-500">小計 <span class="font-bold text-pink-600">{{ displayMoney(group.twd_sum) }}</span></p>
             </div>
         </div>
+        <p v-if="!groupedExpenses.length" class="text-center text-gray-400 text-sm py-8">尚無消費紀錄，掃條碼或手動新增吧 🌸</p>
     </div>
 
     <!-- ───── 分類總結 ───── -->
@@ -228,13 +296,17 @@
             </div>
         </div>
     </div>
+    </template>
 
-    <!-- ───── 燈箱：Supabase Auth 登入 ───── -->
+</template>
+</template>
+
+    <!-- ════════ 燈箱：登入 ════════ -->
     <div v-if="showLoginModal" class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
         <div class="bg-white p-6 rounded-2xl max-w-sm w-full shadow-lg">
-            <h2 class="text-lg font-bold mb-4 flex items-center gap-1"><span class="material-icons">lock</span> 管理者登入</h2>
+            <h2 class="text-lg font-bold mb-4 flex items-center gap-1"><span class="material-icons">login</span> 登入</h2>
             <div class="space-y-3">
-                <input v-model="loginEmail" type="email" placeholder="管理員 Email" class="w-full p-2.5 border rounded-lg text-sm">
+                <input v-model="loginEmail" type="email" placeholder="信箱" class="w-full p-2.5 border rounded-lg text-sm">
                 <input v-model="loginPass" type="password" placeholder="密碼" class="w-full p-2.5 border rounded-lg text-sm" @keyup.enter="handleLogin">
                 <p v-if="loginError" class="text-xs text-red-500 font-medium">{{ loginError }}</p>
                 <div class="flex gap-2 pt-2">
@@ -245,12 +317,127 @@
         </div>
     </div>
 
-    <!-- ───── 燈箱：後台設定 ───── -->
+    <!-- ════════ 燈箱：申請使用（填寫個人資料）════════ -->
+    <div v-if="showApplyModal" class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div class="bg-white p-6 rounded-2xl max-w-sm w-full shadow-lg">
+            <h2 class="text-lg font-bold mb-1 flex items-center gap-1"><span class="material-icons">person_add</span> 申請使用</h2>
+            <p class="text-[11px] text-gray-500 mb-4">送出後請等待管理員核發邀請碼，再回來登入並輸入邀請碼啟用。</p>
+            <div class="space-y-3 text-sm">
+                <input v-model="applyForm.username" placeholder="帳號 / 暱稱" class="w-full p-2.5 border rounded-lg">
+                <input v-model="applyForm.email" type="email" placeholder="信箱" class="w-full p-2.5 border rounded-lg">
+                <input v-model="applyForm.password" type="password" placeholder="密碼（至少 6 碼）" class="w-full p-2.5 border rounded-lg">
+                <div>
+                    <label class="text-xs text-gray-500">生日</label>
+                    <input v-model="applyForm.birthday" type="date" class="w-full p-2.5 border rounded-lg">
+                </div>
+                <p v-if="applyError" class="text-xs text-red-500 font-medium">{{ applyError }}</p>
+                <div class="flex gap-2 pt-1">
+                    <button @click="showApplyModal = false" class="w-1/2 border py-2 rounded-lg">取消</button>
+                    <button @click="submitApply" :disabled="applying" class="w-1/2 bg-pink-500 text-white py-2 rounded-lg font-bold disabled:opacity-50">
+                        {{ applying ? '送出中…' : '送出申請' }}
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ════════ 燈箱：分享帳本 ════════ -->
+    <div v-if="showShareModal" class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div class="bg-white p-6 rounded-2xl max-w-sm w-full shadow-lg space-y-4">
+            <h2 class="text-lg font-bold flex items-center gap-1"><span class="material-icons">share</span> 分享這本帳本</h2>
+            <p class="text-[11px] text-gray-500">把「{{ bookSettings?.title }}」分享給其他帳號一起檢視（對方無法修改）。</p>
+            <div class="flex gap-2">
+                <input v-model="shareEmail" type="email" placeholder="對方的信箱" class="flex-1 p-2.5 border rounded-lg text-sm">
+                <button @click="doShare" class="bg-teal-500 text-white px-3 rounded-lg text-sm font-bold">分享</button>
+            </div>
+            <p v-if="shareMsg" class="text-xs font-medium" :class="shareOk ? 'text-green-600' : 'text-red-500'">{{ shareMsg }}</p>
+            <div>
+                <p class="text-xs font-bold text-gray-600 mb-1">已分享給：</p>
+                <div v-if="!myShares.length" class="text-xs text-gray-400">尚未分享</div>
+                <div v-for="s in myShares" :key="s.id" class="flex justify-between items-center text-sm py-1 border-b last:border-none">
+                    <span>{{ s.shared_with_email }}</span>
+                    <button @click="cancelShare(s.id)" class="text-red-400 text-xs flex items-center gap-0.5">
+                        <span class="material-icons text-sm">cancel</span> 取消分享
+                    </button>
+                </div>
+            </div>
+            <button @click="showShareModal = false" class="w-full border py-2 rounded-lg text-sm">關閉</button>
+        </div>
+    </div>
+
+    <!-- ════════ 燈箱：管理後台（管理員）════════ -->
+    <div v-if="showSysPanel" class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-start justify-center z-50 p-4 overflow-y-auto">
+        <div class="bg-white p-6 rounded-2xl max-w-md w-full shadow-lg my-8 space-y-6">
+            <h2 class="text-lg font-bold flex items-center gap-1"><span class="material-icons">manage_accounts</span> 管理後台</h2>
+
+            <!-- 產生邀請碼 -->
+            <div class="space-y-2 text-xs border rounded-xl p-3">
+                <p class="font-bold text-gray-700">🔑 產生邀請碼</p>
+                <select v-model="newCode.email" class="w-full p-2 border rounded-lg">
+                    <option value="">— 選擇待審申請者的信箱 —</option>
+                    <option v-for="a in adminApps.filter(a => a.status==='pending')" :key="a.id" :value="a.email">{{ a.email }}（{{ a.username }}）</option>
+                </select>
+                <div class="flex gap-2">
+                    <input v-model="newCode.email" placeholder="或手動輸入信箱" class="flex-1 p-2 border rounded-lg">
+                    <input v-model="newCode.code" placeholder="邀請碼" class="w-28 p-2 border rounded-lg uppercase">
+                </div>
+                <button @click="createInviteCode" class="w-full bg-pink-500 text-white py-2 rounded-lg font-bold">確認新增</button>
+            </div>
+
+            <!-- 申請清單 -->
+            <div class="space-y-1 text-xs">
+                <p class="font-bold text-gray-700">📋 帳號申請</p>
+                <div v-if="!adminApps.length" class="text-gray-400">目前沒有申請</div>
+                <div v-for="a in adminApps" :key="a.id" class="flex justify-between items-center py-1 border-b last:border-none">
+                    <span>{{ a.username }}・{{ a.email }}</span>
+                    <span :class="a.status==='pending' ? 'text-orange-500' : 'text-green-600'">{{ statusLabel(a.status) }}</span>
+                </div>
+            </div>
+
+            <!-- 邀請碼狀態 -->
+            <div class="space-y-1 text-xs">
+                <p class="font-bold text-gray-700">🎟️ 邀請碼狀態</p>
+                <div v-for="c in adminCodes" :key="c.id" class="flex justify-between items-center py-1 border-b last:border-none">
+                    <span class="font-mono">{{ c.code }} <span class="text-gray-400">→ {{ c.email }}</span></span>
+                    <span class="flex items-center gap-2">
+                        <span :class="c.is_used ? 'text-gray-400' : 'text-green-600'">{{ c.is_used ? '已使用' : '未使用' }}</span>
+                        <button @click="deleteCode(c)" class="text-red-300"><span class="material-icons text-sm">delete</span></button>
+                    </span>
+                </div>
+            </div>
+
+            <!-- 使用者管理 -->
+            <div class="space-y-1 text-xs">
+                <p class="font-bold text-gray-700">👥 使用者</p>
+                <div v-for="u in adminUsers" :key="u.id" class="flex justify-between items-center py-1 border-b last:border-none">
+                    <span>{{ u.username }}・{{ u.email }} <span class="text-gray-400">({{ u.role }}/{{ statusLabel(u.status) }})</span></span>
+                    <button v-if="u.role!=='admin'" @click="deleteUser(u)" class="text-red-400 text-xs flex items-center gap-0.5">
+                        <span class="material-icons text-sm">person_remove</span> 刪除
+                    </button>
+                </div>
+            </div>
+
+            <!-- 分享連結管理 -->
+            <div class="space-y-1 text-xs">
+                <p class="font-bold text-gray-700">🔗 所有分享連結</p>
+                <div v-if="!adminShares.length" class="text-gray-400">目前沒有分享</div>
+                <div v-for="s in adminShares" :key="s.id" class="flex justify-between items-center py-1 border-b last:border-none">
+                    <span>帳本#{{ s.book_id }} → {{ s.shared_with_email }}</span>
+                    <button @click="adminCancelShare(s.id)" class="text-red-400 text-xs flex items-center gap-0.5">
+                        <span class="material-icons text-sm">link_off</span> 取消
+                    </button>
+                </div>
+            </div>
+
+            <button @click="showSysPanel = false" class="w-full border py-2 rounded-lg text-sm">關閉</button>
+        </div>
+    </div>
+
+    <!-- ════════ 燈箱：帳本設定 ════════ -->
     <div v-if="showAdminPanel" class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-start justify-center z-50 p-4 overflow-y-auto">
         <div class="bg-white p-6 rounded-2xl max-w-sm w-full shadow-lg my-8 space-y-5">
-            <h2 class="text-lg font-bold flex items-center gap-1"><span class="material-icons">settings</span> 後台設定</h2>
+            <h2 class="text-lg font-bold flex items-center gap-1"><span class="material-icons">settings</span> 帳本設定</h2>
 
-            <!-- 帳本資訊 -->
             <div class="space-y-2 text-xs">
                 <p class="font-bold text-gray-600">帳本資訊（支援 Emoji）</p>
                 <input v-model="settingsForm.title" placeholder="帳本標題" class="w-full p-2 border rounded-lg">
@@ -261,7 +448,6 @@
                 </div>
             </div>
 
-            <!-- Logo 更換 -->
             <div class="space-y-2 text-xs">
                 <p class="font-bold text-gray-600">首頁 Logo（不限大小規格，自動縮放）</p>
                 <div class="flex items-center gap-3">
@@ -274,7 +460,6 @@
                 </div>
             </div>
 
-            <!-- 分類管理 -->
             <div class="space-y-2 text-xs">
                 <p class="font-bold text-gray-600">消費分類（Emoji 圖示 + 名稱，皆可編輯）</p>
                 <div v-for="c in categories" :key="c.id" class="flex items-center gap-1.5">
@@ -290,7 +475,6 @@
                 </div>
             </div>
 
-            <!-- 修改密碼（Supabase Auth）-->
             <div class="space-y-2 text-xs">
                 <p class="font-bold text-gray-600">修改登入密碼</p>
                 <div class="flex gap-2">
@@ -304,7 +488,6 @@
                 <button @click="saveSettings" class="w-1/2 bg-pink-500 text-white py-2 rounded-lg text-sm font-bold">儲存帳本設定</button>
             </div>
 
-            <!-- 刪除目前帳本 -->
             <div class="border-t pt-3">
                 <button @click="deleteBook" class="w-full text-red-500 border border-red-200 py-2 rounded-lg text-xs flex items-center justify-center gap-1">
                     <span class="material-icons text-sm">delete_forever</span> 刪除目前這本帳本（含底下所有消費）
@@ -313,17 +496,18 @@
         </div>
     </div>
 
-</template>
-<div v-else class="text-center pt-32 text-gray-400 text-sm">資料載入中…</div>
 </div>
 
 <script>
-/* ════════ 1. Supabase 連線（換成你自己的）════════ */
+/* ════════ 1. Supabase 連線 ════════ */
 const SUPABASE_URL = 'https://ipvyroculwdsemxwxlna.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_6o2RDhsp3pH1roEqMAZqeQ_v1shcB1t';
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-/* ════════ 2. 幣別清單（要加幣別在這裡加一行即可）════════ */
+/* 管理員信箱（在此清單內者登入即為管理員）*/
+const ADMIN_EMAILS = ['markno.5.studio@gmail.com'];
+
+/* ════════ 2. 幣別清單 ════════ */
 const CURRENCY_META = {
     TWD: { name: '台幣',   symbol: 'NT$', flag: '🇹🇼' },
     KRW: { name: '韓元',   symbol: '₩',   flag: '🇰🇷' },
@@ -337,7 +521,6 @@ const CURRENCY_META = {
     SGD: { name: '新加坡幣', symbol: 'S$', flag: '🇸🇬' },
 };
 
-/* Open Food Facts 類別 → 我方分類的對照（掃到新商品時自動歸類）*/
 const OFF_CATEGORY_MAP = [
     { match: /beverage|drink|water|juice|tea|coffee/i, cat: '餐飲',     icon: '🍜' },
     { match: /snack|cookie|biscuit|candy|chocolate|chip|food|noodle|ramen/i, cat: '食品零食', icon: '🍓' },
@@ -350,26 +533,40 @@ const { createApp } = Vue;
 createApp({
     data() {
         return {
+            authReady: false,
             user: null,
-            books: [],                       // 所有帳本 / 專案
+            profile: null,
+            // 申請 / 邀請
+            showApplyModal: false, applying: false, applyError: '',
+            applyForm: { username: '', email: '', password: '', birthday: '' },
+            inviteInput: '', inviteError: '',
+            // 帳本 / 資料
+            books: [],
             currentBookId: Number(localStorage.getItem('currentBookId')) || null,
             settingsForm: {},
-            allExpenses: [],                 // 全部消費（含各帳本）
+            allExpenses: [],
             categories: [],
             newCat: { icon: '', name: '' },
             currentTab: 'detail',
             openGroups: {},
             currencyMeta: CURRENCY_META,
-            // 匯率
-            rates: { TWD: 1 },       // 1 TWD = rates[X] 單位的 X 幣
+            rates: { TWD: 1 },
             ratesDate: '',
-            rateCurrency: localStorage.getItem('rateCurrency') || 'KRW',     // 匯率列顯示的「當地/其他地點」
-            displayCurrency: 'TWD',  // 每日明細顯示幣別（預設台幣）
+            rateCurrency: localStorage.getItem('rateCurrency') || 'KRW',
+            displayCurrency: 'TWD',
             // 掃描
             isScanning: false, scanner: null, showQuickForm: false, scanHint: '',
+            scanMode: localStorage.getItem('scanMode') || 'auto',
+            scanModes: [{ v: 'auto', label: '自動' }, { v: '1d', label: '一維條碼' }, { v: '2d', label: 'QR Code' }],
             // 登入
             showLoginModal: false, loginEmail: '', loginPass: '', loginError: '',
             showAdminPanel: false, newPass: '',
+            // 分享
+            showShareModal: false, shareEmail: '', shareMsg: '', shareOk: false, myShares: [],
+            // 管理後台
+            showSysPanel: false,
+            adminApps: [], adminCodes: [], adminUsers: [], adminShares: [],
+            newCode: { email: '', code: '' },
             // 表單
             saving: false, editingId: null,
             form: this.emptyForm(),
@@ -380,7 +577,14 @@ createApp({
         currentBookId(v) { if (v) localStorage.setItem('currentBookId', v); },
     },
     computed: {
+        isAdmin() { return this.profile?.role === 'admin'; },
+        isActive() { return this.isAdmin || this.profile?.status === 'active'; },
         bookSettings() { return this.books.find(b => b.id === this.currentBookId) || null; },
+        /* 可寫入：自己的帳本 或 管理員 */
+        canWrite() {
+            if (!this.bookSettings) return false;
+            return this.isAdmin || this.bookSettings.owner_id === this.user?.id || this.bookSettings.owner_id == null;
+        },
         expenses() { return this.allExpenses.filter(e => e.book_id === this.currentBookId); },
         foreignCurrencies() { return Object.keys(CURRENCY_META).filter(c => c !== 'TWD'); },
         totalTwd() { return this.expenses.reduce((s, e) => s + (e.amount_twd || 0), 0); },
@@ -423,6 +627,7 @@ createApp({
         resetForm() { this.form = this.emptyForm(); this.editingId = null; this.showQuickForm = false; this.scanHint = ''; },
         formatNumber(n) { return (n || 0).toLocaleString('zh-TW'); },
         catIcon(name) { return this.categories.find(c => c.name === name)?.icon || '📦'; },
+        statusLabel(s) { return ({ pending: '待審', invited: '已發碼', activated: '已啟用', active: '使用中', disabled: '已停用' })[s] || s; },
         formatDateLabel(d) {
             if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
             const dt = new Date(d + 'T00:00:00');
@@ -436,7 +641,6 @@ createApp({
             return '📍';
         },
         makeGroup(key, label, theme, icon, items) {
-            // 該組若全為同一種外幣，附註原幣小計
             const curr = [...new Set(items.map(i => i.currency))];
             const localSum = (curr.length === 1 && curr[0] !== 'TWD')
                 ? items.reduce((s, e) => s + (e.amount || 0), 0) : 0;
@@ -448,7 +652,6 @@ createApp({
             };
         },
         toggleGroup(k) { this.openGroups[k] = !this.openGroups[k]; },
-        /* 依「顯示幣別」輸出金額（內部一律以台幣為基準）*/
         displayMoney(twd) {
             const c = this.displayCurrency;
             if (c === 'TWD' || !this.rates[c]) return 'NT$ ' + this.formatNumber(Math.round(twd));
@@ -456,7 +659,7 @@ createApp({
             return (CURRENCY_META[c]?.symbol || c) + ' ' + this.formatNumber(Math.round(v * 100) / 100);
         },
 
-        /* ───── 即時匯率（open.er-api.com，免金鑰）───── */
+        /* ───── 匯率 ───── */
         async loadRates() {
             try {
                 const r = await fetch('https://open.er-api.com/v6/latest/TWD');
@@ -485,7 +688,6 @@ createApp({
                 sb.from('travel_categories').select('*').order('sort').order('id'),
             ]);
             this.books = books || [];
-            // 確認目前選取的帳本仍存在，否則退回第一本
             if (!this.books.some(b => b.id === this.currentBookId)) {
                 this.currentBookId = this.books[0]?.id || null;
             }
@@ -493,9 +695,9 @@ createApp({
             this.categories = cats || [];
         },
 
-        /* ───── 新增 / 編輯 / 刪除 ───── */
+        /* ───── 新增 / 編輯 / 刪除消費 ───── */
         async saveItem() {
-            if (!this.user) { this.showLoginModal = true; return; }
+            if (!this.canWrite) return alert('此帳本僅供檢視，無法新增');
             if (!this.form.item_name) return alert('請輸入項目名稱');
             if (!this.currentBookId) return alert('請先選擇或新增一本帳本');
             const f = { ...this.form, book_id: this.currentBookId };
@@ -552,7 +754,6 @@ createApp({
             await sb.from('travel_categories').delete().eq('id', c.id);
             await this.loadAll();
         },
-        /* 確保某分類存在；不存在就自動建立（掃描自動歸類用，之後可在後台改名）*/
         async ensureCategory(name, icon) {
             if (this.categories.some(c => c.name === name)) return name;
             await sb.from('travel_categories').insert([{ name, icon: icon || '📦' }]);
@@ -560,37 +761,61 @@ createApp({
             return name;
         },
 
-        /* ───── 掃描（一維條碼 + QR Code）───── */
+        /* ───── 掃描 ───── */
+        scanFormats() {
+            const F = Html5QrcodeSupportedFormats;
+            const oned = [F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E, F.CODE_128, F.CODE_39, F.ITF];
+            if (this.scanMode === '1d') return oned;
+            if (this.scanMode === '2d') return [F.QR_CODE];
+            return [F.QR_CODE, ...oned];
+        },
+        async setScanMode(v) {
+            this.scanMode = v; localStorage.setItem('scanMode', v);
+            if (this.isScanning) { await this.stopScanner(); await this.startScanner(); }
+        },
+        async stopScanner() {
+            try { await this.scanner?.stop(); } catch (_) {}
+            try { await this.scanner?.clear(); } catch (_) {}
+            this.scanner = null; this.isScanning = false;
+        },
         async toggleScanner() {
-            if (this.isScanning) {
-                await this.scanner?.stop().catch(() => {});
-                this.scanner = null; this.isScanning = false; return;
-            }
+            if (this.isScanning) { await this.stopScanner(); return; }
+            await this.startScanner();
+        },
+        async startScanner() {
             this.isScanning = true;
             await this.$nextTick();
-            const formats = [
-                Html5QrcodeSupportedFormats.QR_CODE,
-                Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8,
-                Html5QrcodeSupportedFormats.UPC_A,  Html5QrcodeSupportedFormats.UPC_E,
-                Html5QrcodeSupportedFormats.CODE_128, Html5QrcodeSupportedFormats.CODE_39,
-                Html5QrcodeSupportedFormats.ITF,
-            ];
-            this.scanner = new Html5Qrcode('reader', { formatsToSupport: formats });
             try {
-                await this.scanner.start({ facingMode: 'environment' },
-                    { fps: 10, qrbox: { width: 250, height: 160 } },
-                    (text) => this.onScan(text), () => {});
+                this.scanner = new Html5Qrcode('reader', {
+                    formatsToSupport: this.scanFormats(),
+                    experimentalFeatures: { useBarCodeDetectorIfSupported: true },
+                });
+                // 優先挑「後鏡頭」以提高對焦/準確度
+                let camId = { facingMode: 'environment' };
+                try {
+                    const cams = await Html5Qrcode.getCameras();
+                    if (cams && cams.length) {
+                        const back = cams.find(c => /back|rear|environment|後|背/i.test(c.label));
+                        camId = (back || cams[cams.length - 1]).id;
+                    }
+                } catch (_) {}
+                const cfg = {
+                    fps: 15,
+                    qrbox: (w, h) => { const s = Math.floor(Math.min(w, h) * 0.8); return { width: s, height: this.scanMode === '1d' ? Math.floor(s * 0.5) : s }; },
+                    aspectRatio: 1.0,
+                    disableFlip: false,
+                };
+                await this.scanner.start(camId, cfg, (text) => this.onScan(text), () => {});
             } catch (e) {
-                alert('無法開啟相機：' + e + '\n請確認已允許相機權限，且網址是 https。');
-                this.isScanning = false;
+                alert('無法開啟相機：' + (e?.message || e) + '\n請確認：① 已允許相機權限 ② 網址是 https 或 localhost ③ 其他 App 沒佔用鏡頭。');
+                await this.stopScanner();
             }
         },
         async onScan(text) {
-            await this.scanner?.stop().catch(() => {});
-            this.scanner = null; this.isScanning = false;
+            await this.stopScanner();
             this.editingId = null; this.scanHint = '';
+            if (!this.canWrite) { alert('此帳本僅供檢視，無法新增'); return; }
 
-            /* QR Code 帶 JSON：{"name":"面膜","amt":15000,"cur":"KRW","cat":"美妝保養"} */
             try {
                 const o = JSON.parse(text);
                 if (o && o.name) {
@@ -603,9 +828,7 @@ createApp({
                 }
             } catch (_) {}
 
-            /* 一維商品條碼 */
             this.form = { ...this.emptyForm(), barcode: text };
-            // 1) 以前掃過同條碼 → 直接帶入上次名稱 / 分類 / 幣別
             const prev = this.expenses.find(e => e.barcode === text);
             if (prev) {
                 Object.assign(this.form, { item_name: prev.item_name, category: prev.category,
@@ -614,7 +837,6 @@ createApp({
                 this.scanHint = '（已自動帶入上次紀錄，可修改）';
                 this.showQuickForm = true; return;
             }
-            // 2) 查 Open Food Facts 公開商品庫 → 自動命名 + 依產品種類自動歸類
             this.showQuickForm = true;
             this.scanHint = '（查詢商品資料中…）';
             try {
@@ -628,22 +850,77 @@ createApp({
                     this.scanHint = this.form.item_name ? '（已依商品庫自動命名與歸類，可修改）' : '';
                 }
             } catch (_) {}
-            // 3) 都查不到 → 以條碼末五碼自動建立暫名（之後可改）
             if (!this.form.item_name) {
                 this.form.item_name = '未命名商品 ' + text.slice(-5);
                 this.scanHint = '（新商品，已自動建立暫名，可修改）';
             }
         },
 
-        /* ───── Supabase Auth ───── */
+        /* ───── 認證流程 ───── */
+        async ensureProfile() {
+            if (!this.user) { this.profile = null; return; }
+            const uid = this.user.id, email = this.user.email || '';
+            let { data: prof } = await sb.from('profiles').select('*').eq('id', uid).maybeSingle();
+            if (!prof) {
+                const meta = this.user.user_metadata || {};
+                const isAdminEmail = ADMIN_EMAILS.includes(email.toLowerCase());
+                const row = {
+                    id: uid, email,
+                    username: meta.username || email.split('@')[0],
+                    birthday: meta.birthday || null,
+                    role: isAdminEmail ? 'admin' : 'user',
+                    status: isAdminEmail ? 'active' : 'pending',
+                };
+                const { data: inserted } = await sb.from('profiles').insert(row).select().maybeSingle();
+                prof = inserted || row;
+            }
+            this.profile = prof;
+        },
+        openApply() {
+            this.applyForm = { username: '', email: '', password: '', birthday: '' };
+            this.applyError = '';
+            this.showApplyModal = true;
+        },
+        async submitApply() {
+            this.applyError = '';
+            const f = this.applyForm;
+            if (!f.username || !f.email || !f.password) return this.applyError = '請填寫帳號、信箱與密碼';
+            if (f.password.length < 6) return this.applyError = '密碼至少 6 碼';
+            this.applying = true;
+            // 1) 建立 Auth 帳號（把暱稱 / 生日存進 metadata）
+            const { error: signErr } = await sb.auth.signUp({
+                email: f.email, password: f.password,
+                options: { data: { username: f.username, birthday: f.birthday || null } },
+            });
+            if (signErr) { this.applying = false; return this.applyError = '申請失敗：' + signErr.message; }
+            // 2) 寫入申請紀錄（公開可 insert）
+            await sb.from('user_applications').insert([{
+                username: f.username, email: f.email, birthday: f.birthday || null, status: 'pending',
+            }]).then(() => {}, () => {});
+            this.applying = false;
+            this.showApplyModal = false;
+            alert('✅ 申請已送出！\n請等待管理員核發邀請碼，收到後再登入並輸入即可啟用。');
+        },
+        async redeemInvite() {
+            this.inviteError = '';
+            const code = this.inviteInput.trim();
+            if (!code) return this.inviteError = '請輸入邀請碼';
+            const { data: codes } = await sb.from('invite_codes').select('*').eq('code', code).eq('is_used', false);
+            const match = (codes || []).find(c => (c.email || '').toLowerCase() === this.user.email.toLowerCase());
+            if (!match) return this.inviteError = '邀請碼無效、已被使用，或與你的信箱不符';
+            await sb.from('invite_codes').update({ is_used: true, used_by: this.user.id }).eq('id', match.id);
+            await sb.from('profiles').update({ status: 'active' }).eq('id', this.user.id);
+            await sb.from('user_applications').update({ status: 'activated' }).eq('email', this.user.email).then(() => {}, () => {});
+            this.profile.status = 'active';
+            await this.afterActivated();
+        },
         async handleLogin() {
             this.loginError = '';
-            const { error } = await sb.auth.signInWithPassword({
-                email: this.loginEmail, password: this.loginPass });
+            const { error } = await sb.auth.signInWithPassword({ email: this.loginEmail, password: this.loginPass });
             if (error) { this.loginError = '登入失敗：' + error.message; return; }
             this.showLoginModal = false; this.loginPass = '';
         },
-        async logout() { await sb.auth.signOut(); },
+        async logout() { await this.stopScanner(); await sb.auth.signOut(); },
         async changePassword() {
             if (!this.newPass || this.newPass.length < 6) return alert('密碼至少 6 碼');
             const { error } = await sb.auth.updateUser({ password: this.newPass });
@@ -651,37 +928,116 @@ createApp({
             if (!error) this.newPass = '';
         },
 
-        /* ───── 後台設定 / Logo ───── */
+        /* ───── 啟用後載入資料 ───── */
+        async afterActivated() {
+            await Promise.all([this.loadAll(), this.loadRates()]);
+        },
+
+        /* ───── 分享 ───── */
+        async openShare() {
+            this.shareEmail = ''; this.shareMsg = '';
+            this.showShareModal = true;
+            await this.loadMyShares();
+        },
+        async loadMyShares() {
+            const { data } = await sb.from('book_shares').select('*')
+                .eq('book_id', this.currentBookId).eq('owner_id', this.user.id).order('id');
+            this.myShares = data || [];
+        },
+        async doShare() {
+            this.shareMsg = '';
+            const email = this.shareEmail.trim();
+            if (!email) return;
+            const { data, error } = await sb.rpc('share_book', { p_book_id: this.currentBookId, p_email: email });
+            if (error) { this.shareOk = false; return this.shareMsg = '分享失敗：' + error.message; }
+            const msg = { ok: '✅ 已分享成功', no_user: '查無此使用者（對方需先註冊）', not_owner: '只有帳本擁有者可分享', self: '不能分享給自己' }[data] || data;
+            this.shareOk = data === 'ok'; this.shareMsg = msg;
+            if (data === 'ok') { this.shareEmail = ''; await this.loadMyShares(); }
+        },
+        async cancelShare(id) {
+            if (!confirm('取消這個分享？')) return;
+            await sb.from('book_shares').delete().eq('id', id);
+            await this.loadMyShares();
+        },
+
+        /* ───── 管理後台 ───── */
+        async openSysPanel() {
+            this.showSysPanel = true;
+            await this.loadAdminData();
+        },
+        async loadAdminData() {
+            const [{ data: apps }, { data: codes }, { data: users }, { data: shares }] = await Promise.all([
+                sb.from('user_applications').select('*').order('created_at', { ascending: false }),
+                sb.from('invite_codes').select('*').order('created_at', { ascending: false }),
+                sb.from('profiles').select('*').order('created_at', { ascending: false }),
+                sb.from('book_shares').select('*').order('id', { ascending: false }),
+            ]);
+            this.adminApps = apps || [];
+            this.adminCodes = codes || [];
+            this.adminUsers = users || [];
+            this.adminShares = shares || [];
+        },
+        async createInviteCode() {
+            const email = (this.newCode.email || '').trim();
+            const code = (this.newCode.code || '').trim();
+            if (!email || !code) return alert('請選擇 / 輸入申請者信箱，並填寫邀請碼');
+            const { error } = await sb.from('invite_codes').insert([{ code, email, is_used: false }]);
+            if (error) return alert('新增失敗（邀請碼可能重複）：' + error.message);
+            await sb.from('user_applications').update({ status: 'invited' }).eq('email', email).then(() => {}, () => {});
+            alert('✅ 邀請碼「' + code + '」已建立，請通知 ' + email + ' 登入後輸入。');
+            this.newCode = { email: '', code: '' };
+            await this.loadAdminData();
+        },
+        async deleteCode(c) {
+            if (!confirm('刪除邀請碼「' + c.code + '」？')) return;
+            await sb.from('invite_codes').delete().eq('id', c.id);
+            await this.loadAdminData();
+        },
+        async deleteUser(u) {
+            if (!confirm('刪除使用者「' + u.username + '（' + u.email + '）」？\n⚠ 會刪除其個人資料與所有帳本 / 消費。\n（Auth 登入帳號需另在 Supabase Dashboard 移除）')) return;
+            // 刪除其帳本（消費會 cascade）、分享、profile
+            await sb.from('travel_settings').delete().eq('owner_id', u.id);
+            await sb.from('book_shares').delete().eq('owner_id', u.id);
+            await sb.from('book_shares').delete().eq('shared_with_id', u.id);
+            const { error } = await sb.from('profiles').delete().eq('id', u.id);
+            if (error) return alert('刪除失敗：' + error.message);
+            alert('已刪除。請記得到 Supabase → Authentication → Users 移除其登入帳號。');
+            await Promise.all([this.loadAdminData(), this.loadAll()]);
+        },
+        async adminCancelShare(id) {
+            if (!confirm('取消這個分享連結？')) return;
+            await sb.from('book_shares').delete().eq('id', id);
+            await this.loadAdminData();
+        },
+
+        /* ───── 帳本設定 / Logo ───── */
         openAdminPanel() {
+            if (!this.bookSettings) return alert('請先新增一本帳本');
             this.settingsForm = { ...this.bookSettings };
             this.showAdminPanel = true;
         },
-        /* ───── 帳本 / 專案 ───── */
         async addBook() {
-            if (!this.user) { this.showLoginModal = true; return; }
             const title = prompt('新帳本 / 專案名稱（例如：日本購物之旅）', '新的旅程');
             if (!title) return;
             const { data, error } = await sb.from('travel_settings')
-                .insert([{ title, tag: '', logo: null }]).select().single();
+                .insert([{ title, tag: '', logo: null, owner_id: this.user.id }]).select().single();
             if (error) return alert('建立失敗：' + error.message);
             await this.loadAll();
-            this.currentBookId = data.id;     // 切換到新帳本
-            this.openAdminPanel();            // 直接開後台讓你補上日期 / 標籤 / Logo
+            this.currentBookId = data.id;
+            this.openAdminPanel();
         },
         async deleteBook() {
             if (!this.bookSettings) return;
-            if (this.books.length <= 1) return alert('至少要保留一本帳本，無法刪除最後一本');
             if (!confirm('刪除帳本「' + this.bookSettings.title + '」？\n⚠ 這本帳本底下的所有消費紀錄也會一併刪除，且無法復原！')) return;
             const { error } = await sb.from('travel_settings').delete().eq('id', this.currentBookId);
             if (error) return alert('刪除失敗：' + error.message);
-            this.currentBookId = null;        // loadAll 會自動退回第一本
+            this.currentBookId = null;
             this.showAdminPanel = false;
             await this.loadAll();
         },
         onLogoPick(ev) {
             const file = ev.target.files[0];
             if (!file) return;
-            // 任意大小 / 規格皆可：用 canvas 等比縮到最長邊 512px 再存（避免資料庫過大）
             const img = new Image();
             img.onload = () => {
                 const max = 512, scale = Math.min(1, max / Math.max(img.width, img.height));
@@ -703,6 +1059,7 @@ createApp({
 
         /* ───── Excel ───── */
         downloadExcel() {
+            if (!this.bookSettings) return;
             const rows = this.expenses.map(e => ({
                 日期: e.expense_date, 當日主題: e.day_theme, 項目: e.item_name, 分類: e.category,
                 幣別: e.currency, 原幣金額: e.amount, 台幣金額: e.amount_twd,
@@ -715,14 +1072,26 @@ createApp({
         },
     },
     async mounted() {
-        // Auth 狀態（重新整理也會自動保持登入）
-        const { data: { session } } = await sb.auth.getSession();
-        this.user = session?.user || null;
-        sb.auth.onAuthStateChange((_e, s) => { this.user = s?.user || null; });
+        const applyUser = async (session) => {
+            this.user = session?.user || null;
+            if (this.user) {
+                await this.ensureProfile();
+                if (this.isActive) await this.afterActivated();
+            } else {
+                this.profile = null;
+            }
+            this.authReady = true;
+        };
 
-        await Promise.all([this.loadAll(), this.loadRates()]);
+        const { data: { session } } = await sb.auth.getSession();
+        await applyUser(session);
+
+        sb.auth.onAuthStateChange(async (_e, s) => { await applyUser(s); });
+
         sb.channel('exp-changes')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'travel_expenses' }, () => this.loadAll())
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'travel_expenses' }, () => {
+                if (this.isActive) this.loadAll();
+            })
             .subscribe();
     },
 }).mount('#app');
