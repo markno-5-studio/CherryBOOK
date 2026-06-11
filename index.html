@@ -51,6 +51,17 @@
         </div>
     </div>
 
+    <!-- ───── 帳本 / 專案 切換 ───── -->
+    <div v-if="books.length" class="flex items-center gap-2 mb-3">
+        <span class="material-icons text-pink-500 text-lg shrink-0">menu_book</span>
+        <select v-model="currentBookId" class="flex-1 text-sm font-medium border rounded-lg px-2 py-1.5 bg-white/70 shadow-sm">
+            <option v-for="b in books" :key="b.id" :value="b.id">{{ b.title }}</option>
+        </select>
+        <button v-if="user" @click="addBook" class="text-xs bg-pink-500 text-white px-2.5 py-1.5 rounded-lg flex items-center gap-1 shrink-0 shadow-sm">
+            <span class="material-icons text-xs">add</span> 新增帳本
+        </button>
+    </div>
+
     <!-- ───── 掃描區 ───── -->
     <div v-show="isScanning" class="mb-4 p-2 glass-card rounded-2xl border border-white/50 shadow-md">
         <div id="reader" class="w-full"></div>
@@ -292,6 +303,13 @@
                 <button @click="showAdminPanel = false" class="w-1/2 border py-2 rounded-lg text-sm">關閉</button>
                 <button @click="saveSettings" class="w-1/2 bg-pink-500 text-white py-2 rounded-lg text-sm font-bold">儲存帳本設定</button>
             </div>
+
+            <!-- 刪除目前帳本 -->
+            <div class="border-t pt-3">
+                <button @click="deleteBook" class="w-full text-red-500 border border-red-200 py-2 rounded-lg text-xs flex items-center justify-center gap-1">
+                    <span class="material-icons text-sm">delete_forever</span> 刪除目前這本帳本（含底下所有消費）
+                </button>
+            </div>
         </div>
     </div>
 
@@ -301,8 +319,8 @@
 
 <script>
 /* ════════ 1. Supabase 連線（換成你自己的）════════ */
-const SUPABASE_URL = 'https://你的專案ID.supabase.co';
-const SUPABASE_KEY = '你的anon公開金鑰';
+const SUPABASE_URL = 'https://ipvyroculwdsemxwxlna.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_6o2RDhsp3pH1roEqMAZqeQ_v1shcB1t';
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 /* ════════ 2. 幣別清單（要加幣別在這裡加一行即可）════════ */
@@ -333,9 +351,10 @@ createApp({
     data() {
         return {
             user: null,
-            bookSettings: null,
+            books: [],                       // 所有帳本 / 專案
+            currentBookId: Number(localStorage.getItem('currentBookId')) || null,
             settingsForm: {},
-            expenses: [],
+            allExpenses: [],                 // 全部消費（含各帳本）
             categories: [],
             newCat: { icon: '', name: '' },
             currentTab: 'detail',
@@ -358,8 +377,11 @@ createApp({
     },
     watch: {
         rateCurrency(v) { localStorage.setItem('rateCurrency', v); },
+        currentBookId(v) { if (v) localStorage.setItem('currentBookId', v); },
     },
     computed: {
+        bookSettings() { return this.books.find(b => b.id === this.currentBookId) || null; },
+        expenses() { return this.allExpenses.filter(e => e.book_id === this.currentBookId); },
         foreignCurrencies() { return Object.keys(CURRENCY_META).filter(c => c !== 'TWD'); },
         totalTwd() { return this.expenses.reduce((s, e) => s + (e.amount_twd || 0), 0); },
         totalTwdNoMedical() { return this.expenses.filter(e => !e.is_medical).reduce((s, e) => s + (e.amount_twd || 0), 0); },
@@ -457,13 +479,17 @@ createApp({
 
         /* ───── 資料載入 ───── */
         async loadAll() {
-            const [{ data: settings }, { data: items }, { data: cats }] = await Promise.all([
-                supabase.from('travel_settings').select('*').limit(1).single(),
+            const [{ data: books }, { data: items }, { data: cats }] = await Promise.all([
+                supabase.from('travel_settings').select('*').order('id'),
                 supabase.from('travel_expenses').select('*').order('expense_date').order('id'),
                 supabase.from('travel_categories').select('*').order('sort').order('id'),
             ]);
-            this.bookSettings = settings;
-            this.expenses = items || [];
+            this.books = books || [];
+            // 確認目前選取的帳本仍存在，否則退回第一本
+            if (!this.books.some(b => b.id === this.currentBookId)) {
+                this.currentBookId = this.books[0]?.id || null;
+            }
+            this.allExpenses = items || [];
             this.categories = cats || [];
         },
 
@@ -471,7 +497,8 @@ createApp({
         async saveItem() {
             if (!this.user) { this.showLoginModal = true; return; }
             if (!this.form.item_name) return alert('請輸入項目名稱');
-            const f = { ...this.form };
+            if (!this.currentBookId) return alert('請先選擇或新增一本帳本');
+            const f = { ...this.form, book_id: this.currentBookId };
             if (f.currency === 'TWD' && f.amount && !f.amount_twd) f.amount_twd = f.amount;
             if (!f.amount_twd && f.amount) {
                 const t = this.twdOf(f.amount, f.currency);
@@ -505,7 +532,7 @@ createApp({
             const t = prompt('修改 ' + group.label + ' 的當日主題（支援 Emoji）', group.theme);
             if (t === null) return;
             await supabase.from('travel_expenses').update({ day_theme: t })
-                .eq('expense_date', group.key).eq('is_prepaid', false);
+                .eq('expense_date', group.key).eq('is_prepaid', false).eq('book_id', this.currentBookId);
             await this.loadAll();
         },
 
@@ -628,6 +655,28 @@ createApp({
         openAdminPanel() {
             this.settingsForm = { ...this.bookSettings };
             this.showAdminPanel = true;
+        },
+        /* ───── 帳本 / 專案 ───── */
+        async addBook() {
+            if (!this.user) { this.showLoginModal = true; return; }
+            const title = prompt('新帳本 / 專案名稱（例如：日本購物之旅）', '新的旅程');
+            if (!title) return;
+            const { data, error } = await supabase.from('travel_settings')
+                .insert([{ title, tag: '', logo: null }]).select().single();
+            if (error) return alert('建立失敗：' + error.message);
+            await this.loadAll();
+            this.currentBookId = data.id;     // 切換到新帳本
+            this.openAdminPanel();            // 直接開後台讓你補上日期 / 標籤 / Logo
+        },
+        async deleteBook() {
+            if (!this.bookSettings) return;
+            if (this.books.length <= 1) return alert('至少要保留一本帳本，無法刪除最後一本');
+            if (!confirm('刪除帳本「' + this.bookSettings.title + '」？\n⚠ 這本帳本底下的所有消費紀錄也會一併刪除，且無法復原！')) return;
+            const { error } = await supabase.from('travel_settings').delete().eq('id', this.currentBookId);
+            if (error) return alert('刪除失敗：' + error.message);
+            this.currentBookId = null;        // loadAll 會自動退回第一本
+            this.showAdminPanel = false;
+            await this.loadAll();
         },
         onLogoPick(ev) {
             const file = ev.target.files[0];
