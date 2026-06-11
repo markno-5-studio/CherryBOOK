@@ -321,7 +321,7 @@
 /* ════════ 1. Supabase 連線（換成你自己的）════════ */
 const SUPABASE_URL = 'https://ipvyroculwdsemxwxlna.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_6o2RDhsp3pH1roEqMAZqeQ_v1shcB1t';
-const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 /* ════════ 2. 幣別清單（要加幣別在這裡加一行即可）════════ */
 const CURRENCY_META = {
@@ -480,9 +480,9 @@ createApp({
         /* ───── 資料載入 ───── */
         async loadAll() {
             const [{ data: books }, { data: items }, { data: cats }] = await Promise.all([
-                supabase.from('travel_settings').select('*').order('id'),
-                supabase.from('travel_expenses').select('*').order('expense_date').order('id'),
-                supabase.from('travel_categories').select('*').order('sort').order('id'),
+                sb.from('travel_settings').select('*').order('id'),
+                sb.from('travel_expenses').select('*').order('expense_date').order('id'),
+                sb.from('travel_categories').select('*').order('sort').order('id'),
             ]);
             this.books = books || [];
             // 確認目前選取的帳本仍存在，否則退回第一本
@@ -507,8 +507,8 @@ createApp({
             }
             this.saving = true;
             const q = this.editingId
-                ? supabase.from('travel_expenses').update(f).eq('id', this.editingId)
-                : supabase.from('travel_expenses').insert([f]);
+                ? sb.from('travel_expenses').update(f).eq('id', this.editingId)
+                : sb.from('travel_expenses').insert([f]);
             const { error } = await q;
             this.saving = false;
             if (error) return alert('儲存失敗：' + error.message);
@@ -525,13 +525,13 @@ createApp({
         },
         async deleteItem(id) {
             if (!confirm('確定刪除這筆消費？')) return;
-            await supabase.from('travel_expenses').delete().eq('id', id);
+            await sb.from('travel_expenses').delete().eq('id', id);
             await this.loadAll();
         },
         async editDayTheme(group) {
             const t = prompt('修改 ' + group.label + ' 的當日主題（支援 Emoji）', group.theme);
             if (t === null) return;
-            await supabase.from('travel_expenses').update({ day_theme: t })
+            await sb.from('travel_expenses').update({ day_theme: t })
                 .eq('expense_date', group.key).eq('is_prepaid', false).eq('book_id', this.currentBookId);
             await this.loadAll();
         },
@@ -539,23 +539,23 @@ createApp({
         /* ───── 分類管理 ───── */
         async addCategory() {
             if (!this.newCat.name) return;
-            await supabase.from('travel_categories').insert([{ name: this.newCat.name, icon: this.newCat.icon || '📦' }]);
+            await sb.from('travel_categories').insert([{ name: this.newCat.name, icon: this.newCat.icon || '📦' }]);
             this.newCat = { icon: '', name: '' };
             await this.loadAll();
         },
         async saveCategory(c) {
-            await supabase.from('travel_categories').update({ name: c.name, icon: c.icon }).eq('id', c.id);
+            await sb.from('travel_categories').update({ name: c.name, icon: c.icon }).eq('id', c.id);
             await this.loadAll();
         },
         async deleteCategory(c) {
             if (!confirm('刪除分類「' + c.name + '」？（既有消費不受影響）')) return;
-            await supabase.from('travel_categories').delete().eq('id', c.id);
+            await sb.from('travel_categories').delete().eq('id', c.id);
             await this.loadAll();
         },
         /* 確保某分類存在；不存在就自動建立（掃描自動歸類用，之後可在後台改名）*/
         async ensureCategory(name, icon) {
             if (this.categories.some(c => c.name === name)) return name;
-            await supabase.from('travel_categories').insert([{ name, icon: icon || '📦' }]);
+            await sb.from('travel_categories').insert([{ name, icon: icon || '📦' }]);
             await this.loadAll();
             return name;
         },
@@ -638,15 +638,15 @@ createApp({
         /* ───── Supabase Auth ───── */
         async handleLogin() {
             this.loginError = '';
-            const { error } = await supabase.auth.signInWithPassword({
+            const { error } = await sb.auth.signInWithPassword({
                 email: this.loginEmail, password: this.loginPass });
             if (error) { this.loginError = '登入失敗：' + error.message; return; }
             this.showLoginModal = false; this.loginPass = '';
         },
-        async logout() { await supabase.auth.signOut(); },
+        async logout() { await sb.auth.signOut(); },
         async changePassword() {
             if (!this.newPass || this.newPass.length < 6) return alert('密碼至少 6 碼');
-            const { error } = await supabase.auth.updateUser({ password: this.newPass });
+            const { error } = await sb.auth.updateUser({ password: this.newPass });
             alert(error ? '更新失敗：' + error.message : '密碼已更新');
             if (!error) this.newPass = '';
         },
@@ -661,7 +661,7 @@ createApp({
             if (!this.user) { this.showLoginModal = true; return; }
             const title = prompt('新帳本 / 專案名稱（例如：日本購物之旅）', '新的旅程');
             if (!title) return;
-            const { data, error } = await supabase.from('travel_settings')
+            const { data, error } = await sb.from('travel_settings')
                 .insert([{ title, tag: '', logo: null }]).select().single();
             if (error) return alert('建立失敗：' + error.message);
             await this.loadAll();
@@ -672,7 +672,7 @@ createApp({
             if (!this.bookSettings) return;
             if (this.books.length <= 1) return alert('至少要保留一本帳本，無法刪除最後一本');
             if (!confirm('刪除帳本「' + this.bookSettings.title + '」？\n⚠ 這本帳本底下的所有消費紀錄也會一併刪除，且無法復原！')) return;
-            const { error } = await supabase.from('travel_settings').delete().eq('id', this.currentBookId);
+            const { error } = await sb.from('travel_settings').delete().eq('id', this.currentBookId);
             if (error) return alert('刪除失敗：' + error.message);
             this.currentBookId = null;        // loadAll 會自動退回第一本
             this.showAdminPanel = false;
@@ -695,7 +695,7 @@ createApp({
         },
         async saveSettings() {
             const { id, ...fields } = this.settingsForm;
-            const { error } = await supabase.from('travel_settings').update(fields).eq('id', id);
+            const { error } = await sb.from('travel_settings').update(fields).eq('id', id);
             if (error) return alert('儲存失敗：' + error.message);
             this.showAdminPanel = false;
             await this.loadAll();
@@ -716,12 +716,12 @@ createApp({
     },
     async mounted() {
         // Auth 狀態（重新整理也會自動保持登入）
-        const { data: { session } } = await supabase.auth.getSession();
+        const { data: { session } } = await sb.auth.getSession();
         this.user = session?.user || null;
-        supabase.auth.onAuthStateChange((_e, s) => { this.user = s?.user || null; });
+        sb.auth.onAuthStateChange((_e, s) => { this.user = s?.user || null; });
 
         await Promise.all([this.loadAll(), this.loadRates()]);
-        supabase.channel('exp-changes')
+        sb.channel('exp-changes')
             .on('postgres_changes', { event: '*', schema: 'public', table: 'travel_expenses' }, () => this.loadAll())
             .subscribe();
     },
