@@ -455,7 +455,7 @@
                 <p class="font-bold text-gray-700">👥 使用者</p>
                 <div v-for="u in adminUsers" :key="u.id" class="flex justify-between items-center py-1 border-b last:border-none">
                     <span>{{ u.username }}・{{ u.email }} <span class="text-gray-400">({{ u.role }}/{{ statusLabel(u.status) }})</span></span>
-                    <button v-if="u.role!=='admin'" @click="deleteUser(u)" class="text-red-400 text-xs flex items-center gap-0.5">
+                    <button v-if="u.id !== user?.id" @click="deleteUser(u)" class="text-red-400 text-xs flex items-center gap-0.5">
                         <span class="material-icons text-sm">person_remove</span> 刪除
                     </button>
                 </div>
@@ -1053,13 +1053,25 @@ createApp({
         },
         async redeemInvite() {
             this.inviteError = '';
-            const code = this.inviteInput.trim();
+            const code = this.inviteInput.trim().toUpperCase();   // 統一轉大寫
             if (!code) return this.inviteError = '請輸入邀請碼';
-            const { data: codes } = await sb.from('invite_codes').select('*').eq('code', code).eq('is_used', false);
-            const match = (codes || []).find(c => (c.email || '').toLowerCase() === this.user.email.toLowerCase());
-            if (!match) return this.inviteError = '邀請碼無效、已被使用，或與你的信箱不符';
+            // 同時查詢大小寫兩種版本（相容舊資料）
+            const { data: codes, error: qErr } = await sb.from('invite_codes').select('*').eq('is_used', false);
+            if (qErr) return this.inviteError = '查詢失敗：' + qErr.message;
+            const myEmail = (this.user.email || '').toLowerCase();
+            const match = (codes || []).find(c =>
+                (c.code || '').toUpperCase() === code &&
+                (c.email || '').toLowerCase() === myEmail
+            );
+            if (!match) {
+                // 更詳細的提示
+                const codeExists = (codes || []).some(c => (c.code || '').toUpperCase() === code);
+                if (!codeExists) return this.inviteError = '邀請碼不存在，請確認碼是否正確';
+                return this.inviteError = '邀請碼與你的信箱不符，請確認管理員是否指定了正確信箱';
+            }
             await sb.from('invite_codes').update({ is_used: true, used_by: this.user.id }).eq('id', match.id);
-            await sb.from('profiles').update({ status: 'active' }).eq('id', this.user.id);
+            const { error: pErr } = await sb.from('profiles').update({ status: 'active' }).eq('id', this.user.id);
+            if (pErr) return this.inviteError = '啟用失敗：' + pErr.message;
             await sb.from('user_applications').update({ status: 'activated' }).eq('email', this.user.email).then(() => {}, () => {});
             this.profile.status = 'active';
             await this.afterActivated();
@@ -1130,7 +1142,7 @@ createApp({
         },
         async createInviteCode() {
             const email = (this.newCode.email || '').trim();
-            const code = (this.newCode.code || '').trim();
+            const code = (this.newCode.code || '').trim().toUpperCase();  // 統一轉大寫儲存
             if (!email || !code) return alert('請選擇 / 輸入申請者信箱，並填寫邀請碼');
             const { error } = await sb.from('invite_codes').insert([{ code, email, is_used: false }]);
             if (error) return alert('新增失敗（邀請碼可能重複）：' + error.message);
@@ -1148,10 +1160,19 @@ createApp({
             if (u.id === this.user?.id) return alert('無法刪除自己的帳號');
             if (!confirm('刪除使用者「' + u.username + '（' + u.email + '）」？\n⚠ 會完整刪除：個人資料、所有帳本、消費紀錄、Auth 登入帳號，且無法復原！')) return;
             const { data, error } = await sb.rpc('admin_delete_user', { p_uid: u.id });
-            if (error) return alert('刪除失敗：' + error.message);
-            if (data === 'not_admin') return alert('權限不足');
+            if (error) {
+                if (error.message && error.message.includes('function') && error.message.includes('does not exist')) {
+                    return alert('❌ 缺少資料庫函式！\n\n請到 Supabase SQL Editor 執行最新版「supabase_admin_delete.sql」後再試。\n\n錯誤：' + error.message);
+                }
+                return alert('刪除失敗：' + error.message);
+            }
+            if (data === 'not_admin') return alert('權限不足（你不是管理員）');
             if (data === 'cannot_delete_self') return alert('無法刪除自己的帳號');
-            alert('✅ 已完整刪除「' + u.email + '」（含 Auth 登入帳號）');
+            if (typeof data === 'string' && data.startsWith('error:')) {
+                return alert('刪除失敗：' + data + '\n\n請確認已執行最新版 supabase_admin_delete.sql。');
+            }
+            if (data !== 'ok') return alert('刪除可能未完成，回傳：' + JSON.stringify(data));
+            alert('✅ 已完整刪除「' + u.email + '」\n（含登入帳號與申請紀錄，該信箱可重新申請）');
             await Promise.all([this.loadAdminData(), this.loadAll()]);
         },
         async adminCancelShare(id) {
