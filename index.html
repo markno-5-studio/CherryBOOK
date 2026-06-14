@@ -899,14 +899,9 @@ createApp({
                     formatsToSupport: this.scanFormats(),
                     experimentalFeatures: { useBarCodeDetectorIfSupported: true },
                 });
-                // ★ 用「constraints 物件」而非指定 deviceId：
-                //   讓 iOS 自己選會自動對焦的主鏡頭（指定 deviceId 常會選到無法近拍的超廣角）
-                //   並要求高解析度，讓條碼線條夠清晰才解得到。
-                const camera = {
-                    facingMode: { ideal: 'environment' },
-                    width: { ideal: 1920 },
-                    height: { ideal: 1080 },
-                };
+                // ★ 第一個參數只能有「1 個 key」，所以高解析度/對焦要放在 cfg.videoConstraints
+                //   （videoConstraints 會直接傳給 getUserMedia，可含多個欄位）
+                //   讓 iOS 自選會自動對焦的主鏡頭（指定 deviceId 常會選到無法近拍的超廣角）。
                 const cfg = {
                     fps: 15,
                     qrbox: (w, h) => {
@@ -919,8 +914,13 @@ createApp({
                     },
                     aspectRatio: 1.0,
                     disableFlip: false,
+                    videoConstraints: {
+                        facingMode: { ideal: 'environment' },
+                        width: { ideal: 1920 },
+                        height: { ideal: 1080 },
+                    },
                 };
-                await this.scanner.start(camera, cfg, (text) => this.onScan(text), () => {});
+                await this.scanner.start({ facingMode: 'environment' }, cfg, (text) => this.onScan(text), () => {});
                 // 啟動後拿到實際的影像軌道，套用「連續對焦」並偵測閃光燈
                 await this.$nextTick();
                 this.setupTrack();
