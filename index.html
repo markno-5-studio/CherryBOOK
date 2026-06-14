@@ -78,10 +78,16 @@
 
     <!-- ───── 頂部控制列 ───── -->
     <div class="flex justify-between items-center mb-2 flex-wrap gap-1.5">
-        <button @click="toggleScanner" class="text-xs bg-pink-600 text-white px-3 py-1.5 rounded-full flex items-center gap-1 shadow-sm">
-            <span class="material-icons text-xs">qr_code_scanner</span>
-            {{ isScanning ? '關閉相機' : '掃條碼記帳' }}
-        </button>
+        <div class="flex items-center gap-1.5">
+            <button @click="toggleScanner" class="text-xs bg-pink-600 text-white px-3 py-1.5 rounded-full flex items-center gap-1 shadow-sm">
+                <span class="material-icons text-xs">qr_code_scanner</span>
+                {{ isScanning ? '關閉相機' : '掃條碼記帳' }}
+            </button>
+            <label class="text-xs bg-white/70 text-pink-600 px-3 py-1.5 rounded-full flex items-center gap-1 shadow-sm cursor-pointer border border-pink-200">
+                <span class="material-icons text-xs">photo_camera</span> 拍照/相片掃描
+                <input type="file" accept="image/*" capture="environment" class="hidden" @change="scanImageFile">
+            </label>
+        </div>
         <div class="flex items-center gap-1.5">
             <button v-if="isAdmin" @click="openSysPanel" class="text-xs bg-indigo-500 text-white px-2 py-1 rounded-full flex items-center gap-1">
                 <span class="material-icons text-xs">manage_accounts</span> 管理後台
@@ -176,8 +182,8 @@
         </div>
     </div>
 
-    <!-- ───── 即時匯率列 ───── -->
-    <div class="glass-card rounded-[14px] border border-white/40 shadow-sm px-3 py-2 mb-4 flex items-center justify-between text-[11px]">
+    <!-- ───── 即時匯率列（日常生活模式隱藏）───── -->
+    <div v-if="!isDaily" class="glass-card rounded-[14px] border border-white/40 shadow-sm px-3 py-2 mb-4 flex items-center justify-between text-[11px]">
         <div class="flex items-center gap-1 text-gray-600">
             <span class="material-icons text-[14px] text-pink-500">currency_exchange</span>
             <template v-if="rates[rateCurrency]">
@@ -194,12 +200,35 @@
     <!-- ───── 看板 ───── -->
     <div class="grid grid-cols-2 gap-3 mb-4">
         <div class="glass-card p-4 rounded-[16px] shadow-sm border border-white/40">
-            <p class="text-xs text-gray-500 font-medium">旅費總計（含行前）</p>
+            <p class="text-xs text-gray-500 font-medium">{{ isDaily ? '總支出' : '旅費總計（含行前）' }}</p>
             <p class="text-xl font-bold mt-1 text-pink-600">{{ displayMoney(totalTwd) }}</p>
         </div>
         <div class="glass-card p-4 rounded-[16px] shadow-sm border border-white/40">
-            <p class="text-xs text-gray-500 font-medium">扣除醫美後</p>
-            <p class="text-xl font-bold mt-1 text-pink-600">{{ displayMoney(totalTwdNoMedical) }}</p>
+            <template v-if="hasBudget">
+                <p class="text-xs text-gray-500 font-medium">剩餘預算</p>
+                <p class="text-xl font-bold mt-1" :class="budgetRemaining < 0 ? 'text-red-500' : 'text-green-600'">{{ displayMoney(budgetRemaining) }}</p>
+            </template>
+            <template v-else-if="isDaily">
+                <p class="text-xs text-gray-500 font-medium">每日平均</p>
+                <p class="text-xl font-bold mt-1 text-pink-600">NT$ {{ formatNumber(avgPerDay) }}</p>
+            </template>
+            <template v-else>
+                <p class="text-xs text-gray-500 font-medium">扣除醫美後</p>
+                <p class="text-xl font-bold mt-1 text-pink-600">{{ displayMoney(totalTwdNoMedical) }}</p>
+            </template>
+        </div>
+    </div>
+
+    <!-- ───── 預算進度條 ───── -->
+    <div v-if="hasBudget" class="glass-card rounded-[14px] border border-white/40 shadow-sm px-3 py-2.5 mb-4">
+        <div class="flex justify-between text-[11px] text-gray-600 mb-1">
+            <span>💰 預算 NT$ {{ formatNumber(bookSettings.budget) }}</span>
+            <span :class="budgetRemaining < 0 ? 'text-red-500 font-bold' : 'text-gray-500'">
+                {{ budgetRemaining < 0 ? '超支 NT$ ' + formatNumber(-budgetRemaining) : '已用 ' + budgetPct + '%' }}
+            </span>
+        </div>
+        <div class="w-full bg-gray-200/60 h-2.5 rounded-full overflow-hidden">
+            <div class="h-full rounded-full transition-all" :class="budgetRemaining < 0 ? 'bg-red-500' : 'bg-green-500'" :style="{ width: budgetPct + '%' }"></div>
         </div>
     </div>
 
@@ -215,17 +244,24 @@
             <input v-model="form.item_name" placeholder="項目名稱（支援 Emoji 🍓）" class="p-2 rounded border col-span-2">
             <input v-model="form.expense_date" type="date" class="p-2 rounded border">
             <input v-model="form.day_theme" placeholder="當日主題（如：市區探索 🌸）" class="p-2 rounded border">
-            <input v-model.number="form.amount" type="number" inputmode="decimal" placeholder="金額" class="p-2 rounded border">
-            <select v-model="form.currency" class="p-2 rounded border">
-                <option v-for="(m, c) in currencyMeta" :key="c" :value="c">{{ m.flag }} {{ c }} {{ m.name }}</option>
+            <div>
+                <input v-model="form.amountStr" @input="onAmountInput" type="text" inputmode="text"
+                       placeholder="金額（可算式 120+58*2）" class="p-2 rounded border w-full">
+                <p v-if="amountPreview" class="text-[10px] mt-0.5" :class="amountPreview.bad ? 'text-red-500' : 'text-green-600'">{{ amountPreview.text }}</p>
+            </div>
+            <select v-model="form.currency" class="p-2 rounded border self-start">
+                <option v-for="(m, c) in shownCurrencies" :key="c" :value="c">{{ m.flag }} {{ c }} {{ m.name }}</option>
             </select>
-            <input v-model.number="form.amount_twd" type="number" inputmode="decimal"
-                   :placeholder="form.currency === 'TWD' ? '台幣金額（同左）' : '台幣金額（留空自動換算）'"
-                   class="p-2 rounded border">
-            <select v-model="form.category" class="p-2 rounded border">
+            <div v-if="!isDaily">
+                <input v-model="form.amountTwdStr" @input="onAmountTwdInput" type="text" inputmode="text"
+                       :placeholder="form.currency === 'TWD' ? '台幣金額（同左，可算式）' : '台幣金額（留空自動換算）'"
+                       class="p-2 rounded border w-full">
+                <p v-if="amountTwdPreview" class="text-[10px] mt-0.5" :class="amountTwdPreview.bad ? 'text-red-500' : 'text-green-600'">{{ amountTwdPreview.text }}</p>
+            </div>
+            <select v-model="form.category" :class="['p-2 rounded border self-start', isDaily ? 'col-span-1' : '']">
                 <option v-for="c in categories" :key="c.id" :value="c.name">{{ c.icon }} {{ c.name }}</option>
             </select>
-            <div class="col-span-2 flex items-center gap-4 py-1">
+            <div v-if="!isDaily" class="col-span-2 flex items-center gap-4 py-1">
                 <label class="flex items-center gap-1"><input type="checkbox" v-model="form.is_prepaid"> 行前費用</label>
                 <label class="flex items-center gap-1"><input type="checkbox" v-model="form.is_medical"> 醫美項目</label>
             </div>
@@ -242,7 +278,7 @@
         <button @click="currentTab = 'summary'" :class="['w-1/2 py-2 text-sm font-medium rounded-full transition-all', currentTab === 'summary' ? 'bg-pink-500 text-white shadow' : 'text-gray-600']">📊 分類總結</button>
     </div>
 
-    <div v-if="currentTab === 'detail'" class="flex justify-end items-center gap-1 mb-2 text-[11px] text-gray-600">
+    <div v-if="currentTab === 'detail' && !isDaily" class="flex justify-end items-center gap-1 mb-2 text-[11px] text-gray-600">
         顯示幣別
         <select v-model="displayCurrency" class="border rounded-lg px-1.5 py-0.5 text-[11px]">
             <option value="TWD">🇹🇼 TWD 台幣（預設）</option>
@@ -303,6 +339,16 @@
 
     <!-- ───── 分類總結 ───── -->
     <div v-if="currentTab === 'summary'" class="space-y-4">
+        <div class="grid grid-cols-2 gap-3">
+            <div class="glass-card p-3 rounded-[14px] shadow-sm border border-white/40 text-center">
+                <p class="text-[11px] text-gray-500">總計</p>
+                <p class="text-lg font-bold text-pink-600">NT$ {{ formatNumber(totalTwd) }}</p>
+            </div>
+            <div class="glass-card p-3 rounded-[14px] shadow-sm border border-white/40 text-center">
+                <p class="text-[11px] text-gray-500">每日平均</p>
+                <p class="text-lg font-bold text-pink-600">NT$ {{ formatNumber(avgPerDay) }}</p>
+            </div>
+        </div>
         <div class="glass-card p-4 rounded-[16px] shadow-sm border border-white/40 space-y-3">
             <h3 class="text-sm font-bold flex items-center gap-1">📊 分類統計</h3>
             <div v-for="row in categorySummary" :key="row.cat" class="space-y-1">
@@ -494,6 +540,14 @@
                     <input v-model="settingsForm.start_date" type="date" class="w-1/2 p-2 border rounded-lg">
                     <input v-model="settingsForm.end_date" type="date" class="w-1/2 p-2 border rounded-lg">
                 </div>
+                <label class="flex items-center gap-2 py-1">
+                    <input type="checkbox" v-model="settingsForm.is_daily">
+                    <span>🏠 日常生活記帳模式（預設台幣、隱藏旅遊/醫美欄位）</span>
+                </label>
+                <div class="flex items-center gap-2">
+                    <span class="shrink-0">💰 總預算（台幣，留空＝不設定）</span>
+                    <input v-model.number="settingsForm.budget" type="number" inputmode="decimal" placeholder="例如 30000" class="flex-1 p-2 border rounded-lg">
+                </div>
             </div>
 
             <div class="space-y-2 text-xs">
@@ -675,16 +729,77 @@ createApp({
                 .map(([cat, amount]) => ({ cat, amount, pct: (amount / total * 100).toFixed(1) }))
                 .sort((a, b) => b.amount - a.amount);
         },
+        /* 日常生活模式：隱藏旅遊專用欄位、預設台幣 */
+        isDaily() { return !!this.bookSettings?.is_daily; },
+        /* 日常模式只顯示台幣（仍可手動展開外幣）；旅遊模式顯示全部 */
+        shownCurrencies() { return CURRENCY_META; },
+        amountPreview() {
+            const s = (this.form.amountStr || '').trim();
+            if (!s || /^[0-9.]+$/.test(s)) return null;   // 純數字不顯示
+            const v = this.calcExpr(s);
+            if (v == null) return null;
+            if (isNaN(v)) return { bad: true, text: '算式無效' };
+            return { bad: false, text: '= ' + this.formatNumber(Math.round(v * 100) / 100) };
+        },
+        amountTwdPreview() {
+            const s = (this.form.amountTwdStr || '').trim();
+            if (!s || /^[0-9.]+$/.test(s)) return null;
+            const v = this.calcExpr(s);
+            if (v == null) return null;
+            if (isNaN(v)) return { bad: true, text: '算式無效' };
+            return { bad: false, text: '= ' + this.formatNumber(Math.round(v * 100) / 100) };
+        },
+        /* 預算 */
+        hasBudget() { return this.bookSettings && this.bookSettings.budget > 0; },
+        budgetRemaining() { return (this.bookSettings?.budget || 0) - this.totalTwd; },
+        budgetPct() {
+            if (!this.hasBudget) return 0;
+            return Math.min(100, Math.round(this.totalTwd / this.bookSettings.budget * 100));
+        },
+        /* 每日平均花費（依有紀錄的天數） */
+        avgPerDay() {
+            const days = new Set(this.expenses.filter(e => !e.is_prepaid && e.expense_date).map(e => e.expense_date));
+            const n = days.size || 1;
+            const sum = this.expenses.filter(e => !e.is_prepaid).reduce((s, e) => s + (e.amount_twd || 0), 0);
+            return Math.round(sum / n);
+        },
     },
     methods: {
         /* ───── 小工具 ───── */
         emptyForm() {
             return { item_name: '', amount: null, currency: 'TWD', amount_twd: null,
+                     amountStr: '', amountTwdStr: '',
                      category: '購物', expense_date: new Date().toISOString().slice(0, 10),
                      day_theme: '', is_prepaid: false, is_medical: false, barcode: '' };
         },
-        resetForm() { this.form = this.emptyForm(); this.editingId = null; this.showQuickForm = false; this.scanHint = ''; },
+        resetForm() {
+            this.form = this.emptyForm();
+            if (this.isDaily) {
+                this.form.currency = 'TWD';
+                if (this.categories.some(c => c.name === '日常生活')) this.form.category = '日常生活';
+            }
+            this.editingId = null; this.showQuickForm = false; this.scanHint = '';
+        },
         formatNumber(n) { return (n || 0).toLocaleString('zh-TW'); },
+        /* 安全算式解析：只允許數字與 + - * / ( ) . 空白，支援「120+58*2」 */
+        calcExpr(str) {
+            if (str == null) return null;
+            const s = String(str).trim();
+            if (s === '') return null;
+            if (!/^[0-9+\-*/().\s]+$/.test(s)) return NaN;   // 含非法字元
+            try {
+                const v = Function('"use strict";return (' + s + ')')();
+                return (typeof v === 'number' && isFinite(v)) ? v : NaN;
+            } catch (_) { return NaN; }
+        },
+        onAmountInput() {
+            const v = this.calcExpr(this.form.amountStr);
+            this.form.amount = (v == null || isNaN(v)) ? null : v;
+        },
+        onAmountTwdInput() {
+            const v = this.calcExpr(this.form.amountTwdStr);
+            this.form.amount_twd = (v == null || isNaN(v)) ? null : v;
+        },
         catIcon(name) { return this.categories.find(c => c.name === name)?.icon || '📦'; },
         statusLabel(s) { return ({ pending: '待審', invited: '已發碼', activated: '已啟用', active: '使用中', disabled: '已停用' })[s] || s; },
         formatDateLabel(d) {
@@ -808,7 +923,13 @@ createApp({
             if (!this.canWrite) return alert('此帳本僅供檢視，無法新增');
             if (!this.form.item_name) return alert('請輸入項目名稱');
             if (!this.currentBookId) return alert('請先選擇或新增一本帳本');
-            const f = { ...this.form, book_id: this.currentBookId };
+            // 確保算式已換算成數字
+            this.onAmountInput(); this.onAmountTwdInput();
+            if (this.form.amountStr && this.form.amount == null) return alert('金額算式無效，請檢查');
+            if (this.form.amountTwdStr && this.form.amount_twd == null) return alert('台幣金額算式無效，請檢查');
+            // 寫入資料庫時去掉只在前端用的算式字串欄位
+            const { amountStr, amountTwdStr, ...clean } = this.form;
+            const f = { ...clean, book_id: this.currentBookId };
             if (f.currency === 'TWD' && f.amount && !f.amount_twd) f.amount_twd = f.amount;
             if (!f.amount_twd && f.amount) {
                 const t = this.twdOf(f.amount, f.currency);
@@ -828,7 +949,10 @@ createApp({
         startEdit(item) {
             this.editingId = item.id;
             this.form = { item_name: item.item_name, amount: item.amount, currency: item.currency || 'TWD',
-                amount_twd: item.amount_twd, category: item.category, expense_date: item.expense_date,
+                amount_twd: item.amount_twd,
+                amountStr: item.amount != null ? String(item.amount) : '',
+                amountTwdStr: item.amount_twd != null ? String(item.amount_twd) : '',
+                category: item.category, expense_date: item.expense_date,
                 day_theme: item.day_theme, is_prepaid: item.is_prepaid, is_medical: item.is_medical,
                 barcode: item.barcode || '' };
             window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -903,7 +1027,7 @@ createApp({
                 //   （videoConstraints 會直接傳給 getUserMedia，可含多個欄位）
                 //   讓 iOS 自選會自動對焦的主鏡頭（指定 deviceId 常會選到無法近拍的超廣角）。
                 const cfg = {
-                    fps: 15,
+                    fps: 20,
                     qrbox: (w, h) => {
                         // 一維條碼用「寬扁框」更好對齊；二維用方框
                         if (this.scanMode === '1d') {
@@ -972,6 +1096,37 @@ createApp({
                 alert('此裝置/瀏覽器不支援閃光燈控制');
             }
         },
+        /* 從相片/拍照掃描：避開即時對焦問題，拍清楚一張再辨識，成功率高很多 */
+        async scanImageFile(ev) {
+            const file = ev.target.files && ev.target.files[0];
+            ev.target.value = '';
+            if (!file) return;
+            if (!this.canWrite) { alert('此帳本僅供檢視，無法新增'); return; }
+            await this.stopScanner();
+            const tmpId = 'reader-file-tmp';
+            let el = document.getElementById(tmpId);
+            if (!el) {
+                el = document.createElement('div'); el.id = tmpId;
+                el.style.cssText = 'position:absolute;left:-99999px;top:0;width:320px;';
+                document.body.appendChild(el);
+            }
+            const h = new Html5Qrcode(tmpId, {
+                formatsToSupport: this.scanFormats(),
+                experimentalFeatures: { useBarCodeDetectorIfSupported: true },
+            });
+            try {
+                const text = await h.scanFile(file, true);
+                await this.onScan(text);
+            } catch (e) {
+                alert('這張相片沒有辨識到條碼 😢\n小撇步：把條碼拍大、置中、光線充足、不要傾斜或反光，再拍一張試試。');
+            } finally {
+                try { await h.clear(); } catch (_) {}
+            }
+        },
+        syncAmountStrings() {
+            this.form.amountStr = this.form.amount != null ? String(this.form.amount) : '';
+            this.form.amountTwdStr = this.form.amount_twd != null ? String(this.form.amount_twd) : '';
+        },
         async onScan(text) {
             await this.stopScanner();
             this.editingId = null; this.scanHint = '';
@@ -985,6 +1140,7 @@ createApp({
                         currency: o.cur || (o.twd ? 'TWD' : 'KRW'),
                         category: o.cat || '購物' };
                     if (this.form.amount) this.form.amount_twd = this.twdOf(this.form.amount, this.form.currency);
+                    this.syncAmountStrings();
                     this.showQuickForm = true; return;
                 }
             } catch (_) {}
@@ -995,6 +1151,7 @@ createApp({
                 Object.assign(this.form, { item_name: prev.item_name, category: prev.category,
                     currency: prev.currency || 'TWD', amount: prev.amount });
                 if (this.form.amount) this.form.amount_twd = this.twdOf(this.form.amount, this.form.currency);
+                this.syncAmountStrings();
                 this.scanHint = '（已自動帶入上次紀錄，可修改）';
                 this.showQuickForm = true; return;
             }
@@ -1152,6 +1309,10 @@ createApp({
         async afterActivated() {
             this.loadWeather();
             await Promise.all([this.loadAll(), this.loadRates()]);
+            // 確保「日常生活」分類存在（任何國家都能用的日常記帳）
+            if (this.canWrite && !this.categories.some(c => c.name === '日常生活')) {
+                await this.ensureCategory('日常生活', '🏠');
+            }
         },
 
         /* ───── 分享 ───── */
@@ -1246,13 +1407,17 @@ createApp({
             this.showAdminPanel = true;
         },
         async addBook() {
-            const title = prompt('新帳本 / 專案名稱（例如：日本購物之旅）', '新的旅程');
+            // 先選類型：日常生活 or 旅遊
+            const daily = confirm('要建立哪一種帳本？\n\n【確定】＝🏠 日常生活記帳（預設台幣、隱藏旅遊/醫美欄位）\n【取消】＝✈️ 旅遊記帳（外幣換算、行前/醫美）');
+            const defTitle = daily ? '日常記帳' : '新的旅程';
+            const title = prompt('帳本 / 專案名稱', defTitle);
             if (!title) return;
             const { data, error } = await sb.from('travel_settings')
-                .insert([{ title, tag: '', logo: null, owner_id: this.user.id }]).select().single();
+                .insert([{ title, tag: '', logo: null, owner_id: this.user.id, is_daily: daily }]).select().single();
             if (error) return alert('建立失敗：' + error.message);
             await this.loadAll();
             this.currentBookId = data.id;
+            this.resetForm();
             this.openAdminPanel();
         },
         async deleteBook() {
