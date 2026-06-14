@@ -122,8 +122,8 @@
 
     <!-- ───── 掃描區 ───── -->
     <div v-show="isScanning" class="mb-4 p-2 glass-card rounded-2xl border border-white/50 shadow-md">
-        <div id="reader" class="w-full"></div>
-        <div class="flex items-center justify-center gap-2 mt-2">
+        <div id="reader" class="w-full" @click="tapFocus"></div>
+        <div class="flex items-center justify-center gap-2 mt-2 flex-wrap">
             <span class="text-[11px] text-gray-500">掃描模式</span>
             <div class="flex bg-white/60 rounded-full p-0.5 text-[11px]">
                 <button v-for="m in scanModes" :key="m.v" @click="setScanMode(m.v)"
@@ -131,8 +131,12 @@
                     {{ m.label }}
                 </button>
             </div>
+            <button v-if="torchAvailable" @click="toggleTorch"
+                    :class="['px-3 py-1 rounded-full text-[11px] flex items-center gap-1', torchOn ? 'bg-amber-400 text-white' : 'bg-white/60 text-gray-600']">
+                <span class="material-icons text-sm">{{ torchOn ? 'flash_on' : 'flash_off' }}</span>閃光燈
+            </button>
         </div>
-        <p class="text-center text-[10px] text-gray-500 mt-1">一維：EAN/UPC/Code128｜二維：QR Code</p>
+        <p class="text-center text-[10px] text-gray-500 mt-1">一維：EAN/UPC/Code128｜二維：QR Code・對焦不清可輕點畫面</p>
     </div>
 
     <template v-if="canWrite">
@@ -605,6 +609,7 @@ createApp({
             isScanning: false, scanner: null, showQuickForm: false, scanHint: '',
             scanMode: localStorage.getItem('scanMode') || 'auto',
             scanModes: [{ v: 'auto', label: '自動' }, { v: '1d', label: '一維條碼' }, { v: '2d', label: 'QR Code' }],
+            torchAvailable: false, torchOn: false, videoTrack: null,
             // 登入
             showLoginModal: false, loginEmail: '', loginPass: '', loginError: '',
             showAdminPanel: false, newPass: '',
@@ -880,6 +885,7 @@ createApp({
             try { await this.scanner?.stop(); } catch (_) {}
             try { await this.scanner?.clear(); } catch (_) {}
             this.scanner = null; this.isScanning = false;
+            this.videoTrack = null; this.torchAvailable = false; this.torchOn = false;
         },
         async toggleScanner() {
             if (this.isScanning) { await this.stopScanner(); return; }
@@ -893,25 +899,77 @@ createApp({
                     formatsToSupport: this.scanFormats(),
                     experimentalFeatures: { useBarCodeDetectorIfSupported: true },
                 });
-                // 優先挑「後鏡頭」以提高對焦/準確度
-                let camId = { facingMode: 'environment' };
-                try {
-                    const cams = await Html5Qrcode.getCameras();
-                    if (cams && cams.length) {
-                        const back = cams.find(c => /back|rear|environment|後|背/i.test(c.label));
-                        camId = (back || cams[cams.length - 1]).id;
-                    }
-                } catch (_) {}
+                // ★ 用「constraints 物件」而非指定 deviceId：
+                //   讓 iOS 自己選會自動對焦的主鏡頭（指定 deviceId 常會選到無法近拍的超廣角）
+                //   並要求高解析度，讓條碼線條夠清晰才解得到。
+                const camera = {
+                    facingMode: { ideal: 'environment' },
+                    width: { ideal: 1920 },
+                    height: { ideal: 1080 },
+                };
                 const cfg = {
                     fps: 15,
-                    qrbox: (w, h) => { const s = Math.floor(Math.min(w, h) * 0.8); return { width: s, height: this.scanMode === '1d' ? Math.floor(s * 0.5) : s }; },
+                    qrbox: (w, h) => {
+                        // 一維條碼用「寬扁框」更好對齊；二維用方框
+                        if (this.scanMode === '1d') {
+                            return { width: Math.floor(w * 0.92), height: Math.floor(Math.min(w, h) * 0.45) };
+                        }
+                        const s = Math.floor(Math.min(w, h) * 0.8);
+                        return { width: s, height: s };
+                    },
                     aspectRatio: 1.0,
                     disableFlip: false,
                 };
-                await this.scanner.start(camId, cfg, (text) => this.onScan(text), () => {});
+                await this.scanner.start(camera, cfg, (text) => this.onScan(text), () => {});
+                // 啟動後拿到實際的影像軌道，套用「連續對焦」並偵測閃光燈
+                await this.$nextTick();
+                this.setupTrack();
             } catch (e) {
                 alert('無法開啟相機：' + (e?.message || e) + '\n請確認：① 已允許相機權限 ② 網址是 https 或 localhost ③ 其他 App 沒佔用鏡頭。');
                 await this.stopScanner();
+            }
+        },
+        setupTrack() {
+            try {
+                const video = document.querySelector('#reader video');
+                const stream = video && video.srcObject;
+                const track = stream && stream.getVideoTracks && stream.getVideoTracks()[0];
+                if (!track) return;
+                this.videoTrack = track;
+                const caps = track.getCapabilities ? track.getCapabilities() : {};
+                // 連續自動對焦（解決發票一直糊掉的問題）
+                const adv = [];
+                if (caps.focusMode && caps.focusMode.includes('continuous')) adv.push({ focusMode: 'continuous' });
+                if (adv.length) track.applyConstraints({ advanced: adv }).catch(() => {});
+                // 閃光燈是否可用
+                this.torchAvailable = !!(caps.torch);
+            } catch (_) {}
+        },
+        async tapFocus() {
+            // 輕點畫面：要求單次自動對焦（部分裝置支援），幫助對焦糊掉的發票
+            const track = this.videoTrack;
+            if (!track || !track.getCapabilities) return;
+            const caps = track.getCapabilities();
+            try {
+                if (caps.focusMode && caps.focusMode.includes('single-shot')) {
+                    await track.applyConstraints({ advanced: [{ focusMode: 'single-shot' }] });
+                    setTimeout(() => {
+                        if (caps.focusMode.includes('continuous')) {
+                            track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
+                        }
+                    }, 1200);
+                }
+            } catch (_) {}
+        },
+        async toggleTorch() {
+            const track = this.videoTrack;
+            if (!track || !this.torchAvailable) return;
+            try {
+                this.torchOn = !this.torchOn;
+                await track.applyConstraints({ advanced: [{ torch: this.torchOn }] });
+            } catch (e) {
+                this.torchOn = false;
+                alert('此裝置/瀏覽器不支援閃光燈控制');
             }
         },
         async onScan(text) {
