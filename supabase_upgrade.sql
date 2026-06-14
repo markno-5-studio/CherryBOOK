@@ -12,3 +12,7 @@ alter table travel_settings add column if not exists budget   numeric;
 insert into travel_categories (icon, name, sort) values
   ('🏠', '日常生活', 12)
 on conflict (name) do nothing;
+
+-- 3) 重整 PostgREST schema 快取（沒這行有時新欄位讀不到，會出現
+--    "Could not find the 'is_daily' column ... in the schema cache"）
+notify pgrst, 'reload schema';

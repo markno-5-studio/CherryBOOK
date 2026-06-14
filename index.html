@@ -1027,7 +1027,7 @@ createApp({
                 //   （videoConstraints 會直接傳給 getUserMedia，可含多個欄位）
                 //   讓 iOS 自選會自動對焦的主鏡頭（指定 deviceId 常會選到無法近拍的超廣角）。
                 const cfg = {
-                    fps: 20,
+                    fps: 30,   // 解碼頻率（每秒嘗試辨識次數）
                     qrbox: (w, h) => {
                         // 一維條碼用「寬扁框」更好對齊；二維用方框
                         if (this.scanMode === '1d') {
@@ -1042,6 +1042,9 @@ createApp({
                         facingMode: { ideal: 'environment' },
                         width: { ideal: 1920 },
                         height: { ideal: 1080 },
+                        frameRate: { ideal: 60, max: 60 },        // 畫面擷取最高 60 fps
+                        focusMode: 'continuous',                  // 連續自動對焦
+                        advanced: [{ focusMode: 'continuous' }],  // 部分裝置需放在 advanced
                     },
                 };
                 await this.scanner.start({ facingMode: 'environment' }, cfg, (text) => this.onScan(text), () => {});
@@ -1412,8 +1415,16 @@ createApp({
             const defTitle = daily ? '日常記帳' : '新的旅程';
             const title = prompt('帳本 / 專案名稱', defTitle);
             if (!title) return;
-            const { data, error } = await sb.from('travel_settings')
+            let { data, error } = await sb.from('travel_settings')
                 .insert([{ title, tag: '', logo: null, owner_id: this.user.id, is_daily: daily }]).select().single();
+            // 若資料庫尚未新增 is_daily 欄位，退回不含該欄位再建立一次，並提醒跑 SQL
+            if (error && /is_daily|budget|schema cache/i.test(error.message || '')) {
+                ({ data, error } = await sb.from('travel_settings')
+                    .insert([{ title, tag: '', logo: null, owner_id: this.user.id }]).select().single());
+                if (!error) {
+                    alert('⚠ 帳本已建立，但「日常生活模式 / 預算」功能尚未啟用。\n請到 Supabase SQL Editor 執行 supabase_upgrade.sql（內含重整 schema 指令）後即可使用。');
+                }
+            }
             if (error) return alert('建立失敗：' + error.message);
             await this.loadAll();
             this.currentBookId = data.id;
@@ -1445,7 +1456,15 @@ createApp({
         },
         async saveSettings() {
             const { id, ...fields } = this.settingsForm;
-            const { error } = await sb.from('travel_settings').update(fields).eq('id', id);
+            let { error } = await sb.from('travel_settings').update(fields).eq('id', id);
+            // 若 is_daily / budget 欄位尚未建立，先拿掉這兩欄再存，並提醒跑 SQL
+            if (error && /is_daily|budget|schema cache/i.test(error.message || '')) {
+                const { is_daily, budget, ...rest } = fields;
+                ({ error } = await sb.from('travel_settings').update(rest).eq('id', id));
+                if (!error) {
+                    alert('⚠ 其他設定已儲存，但「日常生活模式 / 預算」尚未啟用。\n請到 Supabase SQL Editor 執行 supabase_upgrade.sql 後再試。');
+                }
+            }
             if (error) return alert('儲存失敗：' + error.message);
             this.showAdminPanel = false;
             await this.loadAll();
