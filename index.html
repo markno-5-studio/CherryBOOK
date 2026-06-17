@@ -605,9 +605,9 @@
 </div>
 
 <script>
-/* ════════ 1. Supabase 連線 ════════ */
-const SUPABASE_URL = 'https://ipvyroculwdsemxwxlna.supabase.co';
-const SUPABASE_KEY = 'sb_publishable_6o2RDhsp3pH1roEqMAZqeQ_v1shcB1t';
+/* ════════ 1. Supabase 連線（CherryBOOK 專屬專案）════════ */
+const SUPABASE_URL = 'https://enqxzmqzggjdsqqxwzvq.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_qIJY06rgtEuj7R-SFxlp_w_taTN6RqH';
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 /* 管理員信箱（在此清單內者登入即為管理員）*/
@@ -1499,16 +1499,21 @@ createApp({
            （已完成註冊的正式使用者請用下方「使用者」清單的刪除）*/
         async deleteApplication(a) {
             if (!confirm('刪除「' + a.username + '（' + a.email + '）」的申請？\n⚠ 會一併刪除核發給此信箱的邀請碼，對方須重新申請、取得新的邀請碼才能再次註冊登入。')) return;
-            const { error } = await sb.from('user_applications').delete().eq('id', a.id);
+            // 用安全函式刪除（不受 RLS 影響，會明確回報結果）
+            const { data, error } = await sb.rpc('admin_delete_application', { p_email: a.email });
             if (error) {
-                if (/policy|permission|row-level|denied/i.test(error.message || '')) {
-                    return alert('❌ 資料庫缺少刪除權限！\n\n請先到 Supabase SQL Editor 執行最新版「supabase_app_delete.sql」後再試。\n\n錯誤：' + error.message);
+                const missingFn = error.code === 'PGRST202' || /admin_delete_application/.test(error.message || '');
+                if (missingFn) {
+                    return alert('❌ 缺少資料庫函式！\n\n請到 Supabase SQL Editor（選到 App 連線的那個專案）執行最新版「supabase_app_delete.sql」後再試。\n\n錯誤：' + error.message);
                 }
                 return alert('刪除失敗：' + error.message);
             }
-            // 一併刪除核發給此信箱、尚未使用的邀請碼（讓舊碼失效）
-            await sb.from('invite_codes').delete().eq('email', a.email).eq('is_used', false);
-            alert('✅ 已刪除「' + a.email + '」的申請與未使用邀請碼。\n對方須重新「申請使用」並取得新邀請碼。');
+            if (data === 'not_admin') return alert('權限不足（你不是管理員）');
+            if (typeof data === 'string' && data.startsWith('error:')) {
+                return alert('刪除失敗：' + data + '\n\n請確認已在正確的專案執行 supabase_app_delete.sql。');
+            }
+            if (data !== 'ok') return alert('刪除可能未完成，回傳：' + JSON.stringify(data));
+            alert('✅ 已刪除「' + a.email + '」的申請與未使用邀請碼。\n對方可重新「申請使用」並取得新邀請碼。');
             await this.loadAdminData();
         },
         async deleteUser(u) {
