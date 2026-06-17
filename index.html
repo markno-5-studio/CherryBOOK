@@ -143,6 +143,7 @@
             </button>
         </div>
         <p class="text-center text-[10px] text-gray-500 mt-1">一維：EAN/UPC/Code128｜二維：QR Code・對焦不清可輕點畫面</p>
+        <p class="text-center text-[10px] text-pink-500 mt-0.5">📷 掃不到？改用上方「拍照/相片掃描」，把條碼拍清楚最準</p>
     </div>
 
     <template v-if="canWrite">
@@ -482,9 +483,12 @@
             <div class="space-y-1 text-xs">
                 <p class="font-bold text-gray-700">📋 帳號申請</p>
                 <div v-if="!adminApps.length" class="text-gray-400">目前沒有申請</div>
-                <div v-for="a in adminApps" :key="a.id" class="flex justify-between items-center py-1 border-b last:border-none">
-                    <span>{{ a.username }}・{{ a.email }}</span>
+                <div v-for="a in adminApps" :key="a.id" class="flex justify-between items-center py-1 border-b last:border-none gap-2">
+                    <span class="flex-1 min-w-0 truncate">{{ a.username }}・{{ a.email }}</span>
                     <span :class="a.status==='pending' ? 'text-orange-500' : 'text-green-600'">{{ statusLabel(a.status) }}</span>
+                    <button @click="deleteApplication(a)" class="text-red-400 shrink-0 flex items-center" title="刪除此申請（對方須重新申請）">
+                        <span class="material-icons text-sm">delete</span>
+                    </button>
                 </div>
             </div>
 
@@ -664,6 +668,8 @@ createApp({
             scanMode: localStorage.getItem('scanMode') || 'auto',
             scanModes: [{ v: 'auto', label: '自動' }, { v: '1d', label: '一維條碼' }, { v: '2d', label: 'QR Code' }],
             torchAvailable: false, torchOn: false, videoTrack: null,
+            // 原生 BarcodeDetector 掃描（支援的瀏覽器優先用，準確度最佳）
+            nativeStream: null, nativeDetector: null, usingNative: false, nativeScanning: false, scanRAF: null,
             // 登入
             showLoginModal: false, loginEmail: '', loginPass: '', loginError: '',
             showAdminPanel: false, newPass: '',
@@ -1006,6 +1012,13 @@ createApp({
             if (this.isScanning) { await this.stopScanner(); await this.startScanner(); }
         },
         async stopScanner() {
+            // 原生 BarcodeDetector 掃描清理
+            this.nativeScanning = false;
+            if (this.scanRAF) { cancelAnimationFrame(this.scanRAF); this.scanRAF = null; }
+            if (this.nativeStream) { try { this.nativeStream.getTracks().forEach(t => t.stop()); } catch (_) {} this.nativeStream = null; }
+            if (this.usingNative) { const rd = document.getElementById('reader'); if (rd) rd.innerHTML = ''; }
+            this.usingNative = false; this.nativeDetector = null;
+            // html5-qrcode 掃描清理
             try { await this.scanner?.stop(); } catch (_) {}
             try { await this.scanner?.clear(); } catch (_) {}
             this.scanner = null; this.isScanning = false;
@@ -1016,6 +1029,75 @@ createApp({
             await this.startScanner();
         },
         async startScanner() {
+            this.isScanning = true;
+            await this.$nextTick();
+            // 優先用瀏覽器原生 BarcodeDetector（Android/Chrome 準確度遠勝 ZXing）
+            if (await this.startNativeScanner()) return;
+            // 不支援（如 iOS Safari）→ 退回 html5-qrcode
+            await this.startHtml5Scanner();
+        },
+        /* 原生 BarcodeDetector：成功回 true，失敗回 false（交給 html5-qrcode）*/
+        nativeFormats() {
+            const oned = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf'];
+            if (this.scanMode === '1d') return oned;
+            if (this.scanMode === '2d') return ['qr_code'];
+            return ['qr_code', ...oned];
+        },
+        async startNativeScanner() {
+            if (!('BarcodeDetector' in window)) return false;
+            const reader = document.getElementById('reader');
+            try {
+                const supported = await window.BarcodeDetector.getSupportedFormats();
+                const want = this.nativeFormats().filter(f => supported.includes(f));
+                if (!want.length || !reader) return false;
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+                    audio: false,
+                });
+                reader.innerHTML = '';
+                const video = document.createElement('video');
+                video.setAttribute('playsinline', ''); video.muted = true; video.autoplay = true;
+                video.style.cssText = 'width:100%;border-radius:12px;display:block;';
+                reader.appendChild(video);
+                video.srcObject = stream;
+                await video.play();
+                this.nativeStream = stream;
+                this.nativeDetector = new window.BarcodeDetector({ formats: want });
+                this.usingNative = true;
+                const track = stream.getVideoTracks()[0];
+                this.videoTrack = track;
+                const caps = track.getCapabilities ? track.getCapabilities() : {};
+                if (caps.focusMode && caps.focusMode.includes('continuous')) {
+                    track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
+                }
+                this.torchAvailable = !!caps.torch;
+                this.nativeScanning = true;
+                this.nativeLoop(video);
+                return true;
+            } catch (e) {
+                this.nativeScanning = false;
+                if (this.nativeStream) { try { this.nativeStream.getTracks().forEach(t => t.stop()); } catch (_) {} this.nativeStream = null; }
+                this.usingNative = false; this.nativeDetector = null;
+                if (reader) reader.innerHTML = '';
+                return false;
+            }
+        },
+        nativeLoop(video) {
+            const tick = async () => {
+                if (!this.nativeScanning) return;
+                try {
+                    const codes = await this.nativeDetector.detect(video);
+                    if (codes && codes.length && codes[0].rawValue) {
+                        this.nativeScanning = false;
+                        await this.onScan(codes[0].rawValue);
+                        return;
+                    }
+                } catch (_) {}
+                this.scanRAF = requestAnimationFrame(tick);
+            };
+            this.scanRAF = requestAnimationFrame(tick);
+        },
+        async startHtml5Scanner() {
             this.isScanning = true;
             await this.$nextTick();
             try {
@@ -1106,6 +1188,18 @@ createApp({
             if (!file) return;
             if (!this.canWrite) { alert('此帳本僅供檢視，無法新增'); return; }
             await this.stopScanner();
+            // 1) 先用原生 BarcodeDetector 解析靜態圖（準確度高、支援的瀏覽器優先）
+            if ('BarcodeDetector' in window) {
+                try {
+                    const supported = await window.BarcodeDetector.getSupportedFormats();
+                    const det = new window.BarcodeDetector({ formats: supported });
+                    const bmp = await createImageBitmap(file);
+                    const codes = await det.detect(bmp);
+                    if (bmp.close) bmp.close();
+                    if (codes && codes.length && codes[0].rawValue) { await this.onScan(codes[0].rawValue); return; }
+                } catch (_) {}
+            }
+            // 2) 退回 html5-qrcode 解析靜態圖（iOS Safari 等）
             const tmpId = 'reader-file-tmp';
             let el = document.getElementById(tmpId);
             if (!el) {
@@ -1160,21 +1254,44 @@ createApp({
             }
             this.showQuickForm = true;
             this.scanHint = '（查詢商品資料中…）';
-            try {
-                const r = await fetch(`https://world.openfoodfacts.org/api/v0/product/${encodeURIComponent(text)}.json`);
-                const j = await r.json();
-                if (j.status === 1 && j.product) {
-                    this.form.item_name = j.product.product_name || j.product.generic_name || '';
-                    const tags = (j.product.categories || '') + ' ' + (j.product.categories_tags || []).join(' ');
-                    const hit = OFF_CATEGORY_MAP.find(m => m.match.test(tags));
-                    if (hit) this.form.category = await this.ensureCategory(hit.cat, hit.icon);
-                    this.scanHint = this.form.item_name ? '（已依商品庫自動命名與歸類，可修改）' : '';
-                }
-            } catch (_) {}
+            const info = await this.lookupProduct(text);
+            if (info && info.name) {
+                this.form.item_name = info.name;
+                if (info.cat) this.form.category = await this.ensureCategory(info.cat.name, info.cat.icon);
+                this.scanHint = '（已從' + info.source + '自動命名，可修改）';
+            }
             if (!this.form.item_name) {
                 this.form.item_name = '未命名商品 ' + text.slice(-5);
-                this.scanHint = '（新商品，已自動建立暫名，可修改）';
+                this.scanHint = '（查無商品資料，已建立暫名，請手動命名）';
             }
+        },
+        /* 依序查 食品庫 / 美妝庫 / 一般商品庫（醫美購物多為化妝品，會落在美妝庫）*/
+        async lookupProduct(code) {
+            const dbs = [
+                { url: 'https://world.openfoodfacts.org',    src: '食品庫', defCat: null },
+                { url: 'https://world.openbeautyfacts.org',  src: '美妝庫', defCat: { name: '美妝保養', icon: '💄' } },
+                { url: 'https://world.openproductsfacts.org', src: '商品庫', defCat: null },
+            ];
+            for (const db of dbs) {
+                try {
+                    const r = await fetch(`${db.url}/api/v0/product/${encodeURIComponent(code)}.json`);
+                    const j = await r.json();
+                    if (j.status === 1 && j.product) {
+                        const p = j.product;
+                        let name = p.product_name || p.product_name_en || p.product_name_zh || p.generic_name || '';
+                        const brand = (p.brands || '').split(',')[0].trim();
+                        if (brand) {
+                            if (!name) name = brand;
+                            else if (!name.toLowerCase().includes(brand.toLowerCase())) name = brand + ' ' + name;
+                        }
+                        const tags = (p.categories || '') + ' ' + (p.categories_tags || []).join(' ');
+                        const hit = OFF_CATEGORY_MAP.find(m => m.match.test(tags));
+                        const cat = hit ? { name: hit.cat, icon: hit.icon } : db.defCat;
+                        if (name) return { name: name.trim(), cat, source: db.src };
+                    }
+                } catch (_) {}
+            }
+            return null;
         },
 
         /* ───── 認證流程 ───── */
@@ -1376,6 +1493,22 @@ createApp({
         async deleteCode(c) {
             if (!confirm('刪除邀請碼「' + c.code + '」？')) return;
             await sb.from('invite_codes').delete().eq('id', c.id);
+            await this.loadAdminData();
+        },
+        /* 刪除「申請紀錄」+ 該信箱的邀請碼 → 對方須重新申請、拿新碼才能再註冊登入。
+           （已完成註冊的正式使用者請用下方「使用者」清單的刪除）*/
+        async deleteApplication(a) {
+            if (!confirm('刪除「' + a.username + '（' + a.email + '）」的申請？\n⚠ 會一併刪除核發給此信箱的邀請碼，對方須重新申請、取得新的邀請碼才能再次註冊登入。')) return;
+            const { error } = await sb.from('user_applications').delete().eq('id', a.id);
+            if (error) {
+                if (/policy|permission|row-level|denied/i.test(error.message || '')) {
+                    return alert('❌ 資料庫缺少刪除權限！\n\n請先到 Supabase SQL Editor 執行最新版「supabase_app_delete.sql」後再試。\n\n錯誤：' + error.message);
+                }
+                return alert('刪除失敗：' + error.message);
+            }
+            // 一併刪除核發給此信箱、尚未使用的邀請碼（讓舊碼失效）
+            await sb.from('invite_codes').delete().eq('email', a.email).eq('is_used', false);
+            alert('✅ 已刪除「' + a.email + '」的申請與未使用邀請碼。\n對方須重新「申請使用」並取得新邀請碼。');
             await this.loadAdminData();
         },
         async deleteUser(u) {
