@@ -18,6 +18,8 @@
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
     <script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+    <!-- EmailJS（申請通知 / 寄送邀請碼）-->
+    <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 
     <style>
         body { background: linear-gradient(160deg, #fdf2f8 0%, #fce7f3 45%, #fbcfe8 100%); }
@@ -235,11 +237,16 @@
 
     <!-- ───── 新增 / 編輯表單（可寫入者可見；含手動輸入）───── -->
     <div v-if="canWrite || showQuickForm" class="glass-card p-4 rounded-[16px] shadow-md border border-white/60 mb-6">
-        <h3 class="text-sm font-bold mb-3 flex items-center gap-1">
-            <span class="material-icons text-sm">{{ editingId ? 'edit' : 'add_circle' }}</span>
+        <h3 class="text-sm font-bold mb-3 flex items-start gap-1 flex-wrap break-all">
+            <span class="material-icons text-sm shrink-0">{{ editingId ? 'edit' : 'add_circle' }}</span>
             <template v-if="editingId">編輯項目</template>
-            <template v-else-if="form.barcode">掃描到條碼：{{ form.barcode }}<span v-if="scanHint" class="text-[10px] text-green-600 font-normal ml-1">{{ scanHint }}</span></template>
-            <template v-else>手動新增消費項目</template>
+            <template v-else-if="form.barcode">
+                <span>掃描到條碼：{{ form.barcode.length > 24 ? form.barcode.slice(0,24) + '…' : form.barcode }}</span>
+                <span v-if="scanHint" class="text-[10px] text-green-600 font-normal w-full">{{ scanHint }}</span>
+            </template>
+            <template v-else>
+                手動新增消費項目<span v-if="scanHint" class="text-[10px] text-orange-500 font-normal w-full">{{ scanHint }}</span>
+            </template>
         </h3>
         <div class="grid grid-cols-2 gap-2 text-xs">
             <input v-model="form.item_name" placeholder="項目名稱（支援 Emoji 🍓）" class="p-2 rounded border col-span-2">
@@ -625,6 +632,22 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 /* 管理員信箱（在此清單內者登入即為管理員）*/
 const ADMIN_EMAILS = ['markno.5.studio@gmail.com'];
+
+/* ════════ EmailJS（申請通知 + 寄送邀請碼）════════
+ * 到 https://dashboard.emailjs.com 為「小桃記帳」新增一個 Service 與 Template，
+ * 把下面三個值填上即可（留空＝不寄信，功能照常運作）。
+ *   - SERVICE_ID ：Email Services 頁面該服務的 Service ID
+ *   - TEMPLATE_ID：Email Templates 頁面該模板的 Template ID
+ *   - PUBLIC_KEY ：Account → General → Public Key
+ * 模板需用到的變數：{{to_email}} {{user_name}} {{user_email}} {{invite_code}} {{site_name}} {{site_url}} {{message}}
+ * 並把模板的「To Email」欄位設成 {{to_email}}（收件者才會正確）。
+ */
+const EMAILJS = {
+    SERVICE_ID:  '',                              // ← 填入小桃記帳的 Service ID
+    TEMPLATE_ID: '',                             // ← 填入小桃記帳的 Template ID
+    PUBLIC_KEY:  '',                             // ← 填入 Public Key
+    NOTIFY_EMAIL: 'markno.5.studio@gmail.com',    // 有人申請時，通知信寄到這個信箱（管理員）
+};
 
 /* ════════ 2. 幣別清單 ════════ */
 const CURRENCY_META = {
@@ -1239,11 +1262,57 @@ createApp({
             this.form.amountStr = this.form.amount != null ? String(this.form.amount) : '';
             this.form.amountTwdStr = this.form.amount_twd != null ? String(this.form.amount_twd) : '';
         },
+        /* 台灣電子發票 QR Code 解析：直接讀出日期、總金額（品名僅 UTF-8 編碼時可讀）*/
+        parseTwInvoice(text) {
+            try {
+                if (!/^[A-Z]{2}\d{8}/.test(text) || text.length < 53) return null;
+                const invoiceNo = text.slice(0, 10);
+                const minguo = text.slice(10, 17);          // 民國 YYYMMDD
+                let date = '';
+                if (/^\d{7}$/.test(minguo)) {
+                    const y = 1911 + parseInt(minguo.slice(0, 3), 10);
+                    const m = minguo.slice(3, 5), d = minguo.slice(5, 7);
+                    if (+m >= 1 && +m <= 12 && +d >= 1 && +d <= 31) date = `${y}-${m}-${d}`;
+                }
+                const total = parseInt(text.slice(29, 37), 16);   // 總計額（16 進位）
+                if (!isFinite(total) || total <= 0) return null;
+                let items = [];
+                try {
+                    const rest = text.slice(77);
+                    if (rest.includes(':')) {
+                        const parts = rest.split(':');         // [完整筆數, 本張筆數, 編碼, 品名,數量,單價, …]
+                        if (parts[2] === '1') {                 // 僅 UTF-8 編碼才讀品名（Big5 會亂碼）
+                            for (let i = 3; i + 2 < parts.length; i += 3) {
+                                const nm = (parts[i] || '').trim();
+                                if (nm && /[一-龥A-Za-z]/.test(nm)) items.push(nm);
+                            }
+                        }
+                    }
+                } catch (_) {}
+                return { invoiceNo, date, total, items };
+            } catch (_) { return null; }
+        },
         async onScan(text) {
             await this.stopScanner();
             this.editingId = null; this.scanHint = '';
             if (!this.canWrite) { alert('此帳本僅供檢視，無法新增'); return; }
+            text = (text || '').trim();
+            if (!text) { alert('沒有讀到任何內容，請再試一次'); return; }
 
+            // 0) 台灣電子發票 QR → 直接帶入日期與總額
+            const inv = this.parseTwInvoice(text);
+            if (inv) {
+                this.form = { ...this.emptyForm(),
+                    item_name: (inv.items && inv.items.length) ? inv.items.join('、').slice(0, 40) : ('電子發票 ' + inv.invoiceNo),
+                    barcode: inv.invoiceNo, currency: 'TWD',
+                    amount: inv.total, amount_twd: inv.total,
+                    expense_date: inv.date || this.emptyForm().expense_date };
+                this.syncAmountStrings();
+                this.scanHint = '（電子發票 ' + (inv.date || '') + '，總額 NT$' + this.formatNumber(inv.total) + '，可修改）';
+                this.showQuickForm = true; return;
+            }
+
+            // 1) 自訂 QR（JSON）
             try {
                 const o = JSON.parse(text);
                 if (o && o.name) {
@@ -1257,14 +1326,22 @@ createApp({
                 }
             } catch (_) {}
 
-            this.form = { ...this.emptyForm(), barcode: text };
-            const prev = this.expenses.find(e => e.barcode === text);
+            // 2) 商品條碼（純數字 6~14 碼才視為商品條碼）
+            const isProductBarcode = /^\d{6,14}$/.test(text);
+            this.form = { ...this.emptyForm(), barcode: text.slice(0, 64) };
+            const prev = this.expenses.find(e => e.barcode === text.slice(0, 64));
             if (prev) {
                 Object.assign(this.form, { item_name: prev.item_name, category: prev.category,
                     currency: prev.currency || 'TWD', amount: prev.amount });
                 if (this.form.amount) this.form.amount_twd = this.twdOf(this.form.amount, this.form.currency);
                 this.syncAmountStrings();
                 this.scanHint = '（已自動帶入上次紀錄，可修改）';
+                this.showQuickForm = true; return;
+            }
+            if (!isProductBarcode) {
+                // 不是商品條碼、也不是發票/JSON → 簡單顯示，不要把亂碼塞滿畫面
+                this.form.item_name = '';
+                this.scanHint = '（無法辨識此條碼內容，請手動輸入項目）';
                 this.showQuickForm = true; return;
             }
             this.showQuickForm = true;
@@ -1283,9 +1360,10 @@ createApp({
         /* 依序查 食品庫 / 美妝庫 / 一般商品庫（醫美購物多為化妝品，會落在美妝庫）*/
         async lookupProduct(code) {
             const dbs = [
-                { url: 'https://world.openfoodfacts.org',    src: '食品庫', defCat: null },
-                { url: 'https://world.openbeautyfacts.org',  src: '美妝庫', defCat: { name: '美妝保養', icon: '💄' } },
-                { url: 'https://world.openproductsfacts.org', src: '商品庫', defCat: null },
+                { url: 'https://world.openfoodfacts.org',     src: '食品庫', defCat: null },
+                { url: 'https://world.openbeautyfacts.org',   src: '美妝庫', defCat: { name: '美妝保養', icon: '💄' } },
+                { url: 'https://world.openproductsfacts.org',  src: '商品庫', defCat: null },
+                { url: 'https://world.openpetfoodfacts.org',   src: '寵物食品庫', defCat: null },
             ];
             for (const db of dbs) {
                 try {
@@ -1334,6 +1412,35 @@ createApp({
             this.applyError = '';
             this.showApplyModal = true;
         },
+        /* ───── EmailJS 寄信 ───── */
+        emailReady() {
+            return typeof emailjs !== 'undefined' && EMAILJS.SERVICE_ID && EMAILJS.TEMPLATE_ID && EMAILJS.PUBLIC_KEY;
+        },
+        async sendApplyNotify(f) {                 // 有人申請 → 通知管理員
+            if (!this.emailReady()) return;
+            try {
+                await emailjs.send(EMAILJS.SERVICE_ID, EMAILJS.TEMPLATE_ID, {
+                    to_email: EMAILJS.NOTIFY_EMAIL,
+                    user_name: f.username || '', user_email: f.email || '',
+                    invite_code: '（請到管理後台核發）',
+                    site_name: '小桃記帳', site_url: location.origin + location.pathname,
+                    message: '有新的使用申請：' + (f.username || '') + '（' + (f.email || '') + '），請到「管理後台」核發邀請碼。',
+                }, { publicKey: EMAILJS.PUBLIC_KEY });
+            } catch (e) { console.warn('申請通知信寄送失敗：', e && (e.text || e.message || e)); }
+        },
+        async sendInviteCodeEmail(toEmail, code, username) {   // 核發 → 把邀請碼寄給申請人
+            if (!this.emailReady()) return false;
+            try {
+                await emailjs.send(EMAILJS.SERVICE_ID, EMAILJS.TEMPLATE_ID, {
+                    to_email: toEmail,
+                    user_name: username || toEmail.split('@')[0], user_email: toEmail,
+                    invite_code: code,
+                    site_name: '小桃記帳', site_url: location.origin + location.pathname,
+                    message: '您的小桃記帳邀請碼是：' + code + '。請到網站點「我有邀請碼，立即註冊」完成註冊與登入。',
+                }, { publicKey: EMAILJS.PUBLIC_KEY });
+                return true;
+            } catch (e) { console.warn('邀請碼信寄送失敗：', e && (e.text || e.message || e)); return false; }
+        },
         async submitApply() {
             this.applyError = '';
             const f = this.applyForm;
@@ -1343,8 +1450,9 @@ createApp({
             const { error } = await sb.from('user_applications').insert([{
                 username: f.username, email: f.email, birthday: f.birthday || null, status: 'pending',
             }]);
+            if (error) { this.applying = false; return this.applyError = '申請失敗：' + (error.code === '23505' ? '此信箱已送過申請' : error.message); }
+            await this.sendApplyNotify(f);          // 通知管理員（EmailJS 未設定則自動略過）
             this.applying = false;
-            if (error) return this.applyError = '申請失敗：' + (error.code === '23505' ? '此信箱已送過申請' : error.message);
             this.showApplyModal = false;
             alert('✅ 申請已送出！\n請等管理員審核並核發邀請碼。\n收到邀請碼後，點首頁「我有邀請碼，立即註冊」完成帳號設定。');
         },
@@ -1501,7 +1609,12 @@ createApp({
             const { error } = await sb.from('invite_codes').insert([{ code, email, is_used: false }]);
             if (error) return alert('新增失敗（邀請碼可能重複）：' + error.message);
             await sb.from('user_applications').update({ status: 'invited' }).eq('email', email).then(() => {}, () => {});
-            alert('✅ 邀請碼「' + code + '」已建立，請通知 ' + email + ' 登入後輸入。');
+            // 自動把邀請碼寄給申請人（EmailJS 未設定則略過）
+            const appRow = this.adminApps.find(a => (a.email || '').toLowerCase() === email.toLowerCase());
+            const sent = await this.sendInviteCodeEmail(email, code, appRow && appRow.username);
+            alert(sent
+                ? '✅ 邀請碼「' + code + '」已建立，並已自動 email 給 ' + email + '。'
+                : '✅ 邀請碼「' + code + '」已建立。\n（EmailJS 未設定或寄送失敗，請自行通知 ' + email + '）');
             this.newCode = { email: '', code: '' };
             await this.loadAdminData();
         },
