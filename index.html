@@ -36,7 +36,7 @@
 <!-- ════════ A. 未登入：Logo + 申請 / 登入 ════════ -->
 <template v-else-if="!user">
     <div class="pt-20 flex flex-col items-center text-center">
-        <img src="icons/logo.png" class="w-28 h-28 rounded-[28px] shadow-lg object-cover mb-5" alt="logo"
+        <img :src="appLogo || 'icons/logo.png'" class="w-28 h-28 rounded-[28px] shadow-lg object-cover mb-5" alt="logo"
              onerror="this.src='icons/icon-192.png'">
         <h1 class="text-2xl font-bold tracking-wide mb-1">小桃記帳</h1>
         <p class="text-xs text-gray-500 mb-8">旅遊記帳・條碼管理・多人分享</p>
@@ -151,7 +151,7 @@
     <div v-if="bookSettings" class="mb-3 pt-2">
         <div class="flex items-center justify-between">
             <h1 class="text-2xl font-bold tracking-wider flex items-center gap-2">
-                <img :src="bookSettings.logo || 'icons/logo.png'" class="w-9 h-9 rounded-xl shadow-sm object-cover" alt="logo">
+                <img :src="bookSettings.logo || appLogo || 'icons/logo.png'" class="w-9 h-9 rounded-xl shadow-sm object-cover" alt="logo">
                 {{ bookSettings.title }}
             </h1>
             <span class="px-3 py-1 text-xs rounded-full bg-white/60 font-medium shadow-sm">{{ bookSettings.tag }}</span>
@@ -465,6 +465,19 @@
         <div class="bg-white p-6 rounded-2xl max-w-md w-full shadow-lg my-8 space-y-6">
             <h2 class="text-lg font-bold flex items-center gap-1"><span class="material-icons">manage_accounts</span> 管理後台</h2>
 
+            <!-- 網站 Logo（全站，登入頁也會換）-->
+            <div class="space-y-2 text-xs border rounded-xl p-3">
+                <p class="font-bold text-gray-700">🖼️ 網站 Logo（全站・登入頁也會套用）</p>
+                <div class="flex items-center gap-3">
+                    <img :src="appLogo || 'icons/logo.png'" class="w-14 h-14 rounded-xl object-cover border" onerror="this.src='icons/icon-192.png'">
+                    <label class="bg-pink-100 text-pink-600 px-3 py-2 rounded-lg cursor-pointer font-bold">
+                        {{ savingAppLogo ? '上傳中…' : '更換 Logo' }}
+                        <input type="file" accept="image/*" class="hidden" @change="onAppLogoPick" :disabled="savingAppLogo">
+                    </label>
+                    <button v-if="appLogo" @click="resetAppLogo" class="text-gray-400 underline">還原預設</button>
+                </div>
+            </div>
+
             <!-- 產生邀請碼 -->
             <div class="space-y-2 text-xs border rounded-xl p-3">
                 <p class="font-bold text-gray-700">🔑 產生邀請碼</p>
@@ -642,6 +655,8 @@ createApp({
             authReady: false,
             user: null,
             profile: null,
+            appLogo: null,        // 全站 Logo（管理員可在後台隨時更換）
+            savingAppLogo: false,
             // 申請 / 邀請
             showApplyModal: false, applying: false, applyError: '',
             applyForm: { username: '', email: '', birthday: '' },
@@ -1592,6 +1607,46 @@ createApp({
             img.src = URL.createObjectURL(file);
             ev.target.value = '';
         },
+
+        /* ───── 全站 Logo（管理員可隨時更換）───── */
+        async loadAppSettings() {
+            try {
+                const { data } = await sb.from('app_settings').select('logo').eq('id', 1).maybeSingle();
+                if (data && data.logo) this.appLogo = data.logo;
+            } catch (_) {}
+        },
+        onAppLogoPick(ev) {
+            const file = ev.target.files[0];
+            if (!file) return;
+            const img = new Image();
+            img.onload = async () => {
+                const max = 512, scale = Math.min(1, max / Math.max(img.width, img.height));
+                const cv = document.createElement('canvas');
+                cv.width = Math.round(img.width * scale); cv.height = Math.round(img.height * scale);
+                cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+                const dataUrl = cv.toDataURL('image/png');
+                this.savingAppLogo = true;
+                const { error } = await sb.from('app_settings').update({ logo: dataUrl }).eq('id', 1);
+                this.savingAppLogo = false;
+                if (error) {
+                    if (/app_settings|schema cache|does not exist/i.test(error.message || '')) {
+                        return alert('❌ 缺少資料表！請先到 Supabase SQL Editor 執行 supabase_app_logo.sql 後再試。\n\n' + error.message);
+                    }
+                    return alert('更換失敗：' + error.message);
+                }
+                this.appLogo = dataUrl;
+                alert('✅ 網站 Logo 已更新（所有使用者下次開啟即生效）');
+            };
+            img.src = URL.createObjectURL(file);
+            ev.target.value = '';
+        },
+        async resetAppLogo() {
+            if (!confirm('還原成預設 Logo？')) return;
+            const { error } = await sb.from('app_settings').update({ logo: null }).eq('id', 1);
+            if (error) return alert('還原失敗：' + error.message);
+            this.appLogo = null;
+            alert('✅ 已還原為預設 Logo');
+        },
         async saveSettings() {
             const { id, ...fields } = this.settingsForm;
             let { error } = await sb.from('travel_settings').update(fields).eq('id', id);
@@ -1636,6 +1691,9 @@ createApp({
 
         // 每分鐘更新一次「今天日期」（跨午夜自動換日）
         setInterval(() => { this.now = new Date(); }, 60000);
+
+        // 全站 Logo（不需登入即可載入，登入頁也要顯示）
+        this.loadAppSettings();
 
         const { data: { session } } = await sb.auth.getSession();
         await applyUser(session);

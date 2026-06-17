@@ -4,7 +4,7 @@
  *  - Supabase API → 一律走網路（記帳資料必須即時，不快取）
  * 改版時請把 CACHE_NAME 的版本號 +1，舊快取會自動清除。
  */
-const CACHE_NAME = 'travel-ledger-v14';
+const CACHE_NAME = 'travel-ledger-v15';
 
 const APP_SHELL = [
   './',
