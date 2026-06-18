@@ -91,8 +91,12 @@
                 {{ isScanning ? '關閉相機' : '掃條碼記帳' }}
             </button>
             <label class="text-xs bg-white/70 text-pink-600 px-3 py-1.5 rounded-full flex items-center gap-1 shadow-sm cursor-pointer border border-pink-200">
-                <span class="material-icons text-xs">photo_camera</span> 拍照/相片掃描
+                <span class="material-icons text-xs">photo_camera</span> 拍照掃描
                 <input type="file" accept="image/*" capture="environment" class="hidden" @change="scanImageFile">
+            </label>
+            <label class="text-xs bg-white/70 text-pink-600 px-3 py-1.5 rounded-full flex items-center gap-1 shadow-sm cursor-pointer border border-pink-200">
+                <span class="material-icons text-xs">photo_library</span> 相簿選圖
+                <input type="file" accept="image/*" class="hidden" @change="scanImageFile">
             </label>
         </div>
         <div class="flex items-center gap-1.5">
@@ -1318,8 +1322,11 @@ createApp({
                 el.style.cssText = 'position:absolute;left:-99999px;top:0;width:320px;';
                 document.body.appendChild(el);
             }
+            // 相片掃描一律支援「一維＋二維」全格式（不受掃描模式限制，發票 QR 才掃得到）
+            const F = Html5QrcodeSupportedFormats;
+            const allFormats = [F.QR_CODE, F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E, F.CODE_128, F.CODE_39, F.ITF];
             const h = new Html5Qrcode(tmpId, {
-                formatsToSupport: this.scanFormats(),
+                formatsToSupport: allFormats,
                 experimentalFeatures: { useBarCodeDetectorIfSupported: true },
             });
             try {
