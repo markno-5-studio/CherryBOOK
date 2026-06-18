@@ -135,7 +135,18 @@
 
     <!-- ───── 掃描區 ───── -->
     <div v-show="isScanning" class="mb-4 p-2 glass-card rounded-2xl border border-white/50 shadow-md">
+        <!-- 內建瀏覽器警告（LINE/FB/IG 內開啟，相機常無法對焦）-->
+        <div v-if="isInAppBrowser" class="mb-2 p-2 rounded-lg bg-amber-100 text-amber-800 text-[11px] leading-relaxed">
+            ⚠ 你正在 App 內建瀏覽器（如 LINE）開啟，相機對焦常失效。<br>
+            請點右上角「⋯」選 <b>「用預設瀏覽器/Safari 開啟」</b>，掃描才會正常。
+        </div>
         <div id="reader" class="w-full" @click="tapFocus"></div>
+        <!-- 變焦滑桿（放大條碼，避免靠太近而失焦；iOS 對焦的關鍵）-->
+        <div v-if="zoomAvailable" class="flex items-center gap-2 mt-2 px-1">
+            <span class="material-icons text-pink-500 text-sm shrink-0">zoom_in</span>
+            <input type="range" :min="zoomMin" :max="zoomMax" :step="zoomStep" v-model="zoomVal" @input="setZoom" class="flex-1">
+            <span class="text-[11px] text-gray-500 shrink-0 w-10 text-right">{{ Number(zoomVal).toFixed(1) }}×</span>
+        </div>
         <div class="flex items-center justify-center gap-2 mt-2 flex-wrap">
             <span class="text-[11px] text-gray-500">掃描模式</span>
             <div class="flex bg-white/60 rounded-full p-0.5 text-[11px]">
@@ -149,8 +160,8 @@
                 <span class="material-icons text-sm">{{ torchOn ? 'flash_on' : 'flash_off' }}</span>閃光燈
             </button>
         </div>
-        <p class="text-center text-[10px] text-gray-500 mt-1">一維：EAN/UPC/Code128｜二維：QR Code・對焦不清可輕點畫面</p>
-        <p class="text-center text-[10px] text-pink-500 mt-0.5">📷 掃不到？改用上方「拍照/相片掃描」，把條碼拍清楚最準</p>
+        <p class="text-center text-[10px] text-gray-500 mt-1">一維：EAN/UPC/Code128｜二維：QR Code{{ zoomAvailable ? '・用滑桿放大條碼' : '' }}</p>
+        <p class="text-center text-[10px] text-pink-500 mt-0.5">📷 對焦糊掉掃不到？改用上方「拍照/相片掃描」最準（用原生相機拍清楚再辨識）</p>
     </div>
 
     <template v-if="canWrite">
@@ -748,6 +759,7 @@ createApp({
             scanMode: localStorage.getItem('scanMode') || '1d',   // 預設一維條碼（掃商品最快）
             scanModes: [{ v: 'auto', label: '自動' }, { v: '1d', label: '一維條碼' }, { v: '2d', label: 'QR Code' }],
             torchAvailable: false, torchOn: false, videoTrack: null,
+            zoomAvailable: false, zoomMin: 1, zoomMax: 1, zoomStep: 0.1, zoomVal: 1,
             // 原生 BarcodeDetector 掃描（支援的瀏覽器優先用，準確度最佳）
             nativeStream: null, nativeDetector: null, usingNative: false, nativeScanning: false, scanRAF: null,
             // 登入
@@ -779,6 +791,8 @@ createApp({
         isAdmin() { return this.profile?.role === 'admin'; },
         isActive() { return this.isAdmin || this.profile?.status === 'active'; },
         bookSettings() { return this.books.find(b => b.id === this.currentBookId) || null; },
+        isIOS() { return /iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); },
+        isInAppBrowser() { return /Line|FBAN|FBAV|FB_IAB|Instagram|Messenger|MicroMessenger/i.test(navigator.userAgent || ''); },
         /* 可寫入：自己的帳本 或 管理員 */
         canWrite() {
             if (!this.bookSettings) return false;
@@ -1103,6 +1117,7 @@ createApp({
             try { await this.scanner?.clear(); } catch (_) {}
             this.scanner = null; this.isScanning = false;
             this.videoTrack = null; this.torchAvailable = false; this.torchOn = false;
+            this.zoomAvailable = false; this.zoomVal = 1;
         },
         async toggleScanner() {
             if (this.isScanning) { await this.stopScanner(); return; }
@@ -1144,13 +1159,7 @@ createApp({
                 this.nativeStream = stream;
                 this.nativeDetector = new window.BarcodeDetector({ formats: want });
                 this.usingNative = true;
-                const track = stream.getVideoTracks()[0];
-                this.videoTrack = track;
-                const caps = track.getCapabilities ? track.getCapabilities() : {};
-                if (caps.focusMode && caps.focusMode.includes('continuous')) {
-                    track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
-                }
-                this.torchAvailable = !!caps.torch;
+                this.applyCamControls(stream.getVideoTracks()[0]);
                 this.nativeScanning = true;
                 this.nativeLoop(video);
                 return true;
@@ -1223,22 +1232,44 @@ createApp({
                 const video = document.querySelector('#reader video');
                 const stream = video && video.srcObject;
                 const track = stream && stream.getVideoTracks && stream.getVideoTracks()[0];
-                if (!track) return;
-                this.videoTrack = track;
-                const caps = track.getCapabilities ? track.getCapabilities() : {};
-                // 連續自動對焦（解決發票一直糊掉的問題）
-                const adv = [];
-                if (caps.focusMode && caps.focusMode.includes('continuous')) adv.push({ focusMode: 'continuous' });
-                if (adv.length) track.applyConstraints({ advanced: adv }).catch(() => {});
-                // 閃光燈是否可用
-                this.torchAvailable = !!(caps.torch);
+                if (track) this.applyCamControls(track);
             } catch (_) {}
         },
+        /* 套用相機能力：連續對焦（Android 有效）、變焦、閃光燈偵測 */
+        applyCamControls(track) {
+            if (!track) return;
+            this.videoTrack = track;
+            let caps = {};
+            try { caps = track.getCapabilities ? track.getCapabilities() : {}; } catch (_) {}
+            // 連續自動對焦（Android 多半支援；iOS 不支援此 API，靠硬體自動對焦）
+            if (caps.focusMode && caps.focusMode.includes('continuous')) {
+                track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
+            }
+            // 變焦：讓使用者放大條碼，不必把手機貼太近（太近反而對不到焦）
+            if (caps.zoom && typeof caps.zoom.max === 'number' && caps.zoom.max > (caps.zoom.min || 1)) {
+                this.zoomAvailable = true;
+                this.zoomMin = caps.zoom.min || 1;
+                this.zoomMax = caps.zoom.max;
+                this.zoomStep = caps.zoom.step || 0.1;
+                let cur = this.zoomMin;
+                try { cur = (track.getSettings && track.getSettings().zoom) || this.zoomMin; } catch (_) {}
+                this.zoomVal = cur;
+            } else {
+                this.zoomAvailable = false;
+            }
+            this.torchAvailable = !!caps.torch;
+        },
+        setZoom() {
+            const track = this.videoTrack;
+            if (!track || !this.zoomAvailable) return;
+            try { track.applyConstraints({ advanced: [{ zoom: Number(this.zoomVal) }] }).catch(() => {}); } catch (_) {}
+        },
         async tapFocus() {
-            // 輕點畫面：要求單次自動對焦（部分裝置支援），幫助對焦糊掉的發票
+            // iOS 不支援程式對焦；此處對 Android single-shot 觸發再對焦，iOS 則無作用（請改用變焦或拍照）
             const track = this.videoTrack;
             if (!track || !track.getCapabilities) return;
-            const caps = track.getCapabilities();
+            let caps = {};
+            try { caps = track.getCapabilities(); } catch (_) { return; }
             try {
                 if (caps.focusMode && caps.focusMode.includes('single-shot')) {
                     await track.applyConstraints({ advanced: [{ focusMode: 'single-shot' }] });
