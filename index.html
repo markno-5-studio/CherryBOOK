@@ -25,7 +25,12 @@
         body { background: linear-gradient(160deg, #fdf2f8 0%, #fce7f3 45%, #fbcfe8 100%); }
         .glass-card { background: rgba(255,255,255,.75); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
         #reader, #reader video { border-radius: 12px; overflow: hidden; }
-        input, select { background: #fff; }
+        input, select, textarea { background: #fff; max-width: 100%; }
+        /* 防止任何內容撐破版面（長字串、條碼、Email 等）*/
+        html, body { overflow-x: hidden; max-width: 100%; }
+        #app { overflow-x: hidden; }
+        #app, #app * { overflow-wrap: anywhere; word-break: break-word; }
+        img { max-width: 100%; height: auto; }
     </style>
 </head>
 <body class="min-h-screen text-gray-800 antialiased">
@@ -485,6 +490,32 @@
                 </div>
             </div>
 
+            <!-- 主題顏色 -->
+            <div class="space-y-2 text-xs border rounded-xl p-3">
+                <p class="font-bold text-gray-700">🎨 網頁主題顏色</p>
+                <div class="flex items-center gap-3 flex-wrap">
+                    <input type="color" v-model="themeColor" @input="onThemeInput" class="w-12 h-10 rounded border p-0.5 shrink-0">
+                    <input v-model="themeColor" @input="onThemeInput" placeholder="#ec4899" class="flex-1 min-w-0 p-2 border rounded-lg">
+                    <button @click="resetTheme" class="text-gray-400 underline shrink-0">還原粉紅</button>
+                </div>
+                <p class="text-[10px] text-gray-400">選色後會即時預覽，按下方「儲存後台設定」才會套用給所有人。</p>
+            </div>
+
+            <!-- EmailJS 設定 -->
+            <div class="space-y-2 text-xs border rounded-xl p-3">
+                <p class="font-bold text-gray-700">📧 EmailJS 設定（自動寄送邀請碼 / 申請通知）</p>
+                <input v-model="emailCfg.service" placeholder="Service ID（例：service_xxx）" class="w-full p-2 border rounded-lg">
+                <input v-model="emailCfg.template" placeholder="Template ID（例：template_xxx）" class="w-full p-2 border rounded-lg">
+                <input v-model="emailCfg.public" placeholder="Public Key" class="w-full p-2 border rounded-lg">
+                <input v-model="emailCfg.notify" placeholder="申請通知信箱（留空＝markno.5.studio@gmail.com）" class="w-full p-2 border rounded-lg">
+                <p class="text-[10px] text-gray-400 break-all">模板變數：&#123;&#123;to_email&#125;&#125; &#123;&#123;user_name&#125;&#125; &#123;&#123;user_email&#125;&#125; &#123;&#123;invite_code&#125;&#125; &#123;&#123;site_name&#125;&#125; &#123;&#123;site_url&#125;&#125; &#123;&#123;message&#125;&#125;；To Email 需設成 &#123;&#123;to_email&#125;&#125;。</p>
+            </div>
+
+            <!-- 儲存後台設定（主題色 + EmailJS）-->
+            <button @click="saveSysConfig" :disabled="savingSysCfg" class="w-full bg-indigo-500 text-white py-2 rounded-lg font-bold disabled:opacity-50">
+                {{ savingSysCfg ? '儲存中…' : '💾 儲存後台設定（主題色 / EmailJS）' }}
+            </button>
+
             <!-- 產生邀請碼 -->
             <div class="space-y-2 text-xs border rounded-xl p-3">
                 <p class="font-bold text-gray-700">🔑 產生邀請碼</p>
@@ -649,6 +680,14 @@ const EMAILJS = {
     NOTIFY_EMAIL: 'markno.5.studio@gmail.com',    // 有人申請時，通知信寄到這個信箱（管理員）
 };
 
+/* ════════ 發票品項查詢（財政部 API）════════
+ * ⚠ 財政部 2023 起：發票查詢 API 只開放「通過 ISO27001 認證的公司」申請，個人無法申請。
+ * 預設關閉；掃發票只自動帶入「日期＋總金額」。
+ * 若日後以公司名義申請到 AppID 並部署 Edge Function（edge-function-invoice.ts），
+ * 再把下面改成 true 即可啟用「自動帶入每項品名」。
+ */
+const INVOICE_DETAIL_API_ENABLED = false;
+
 /* ════════ 2. 幣別清單 ════════ */
 const CURRENCY_META = {
     TWD: { name: '台幣',   symbol: 'NT$', flag: '🇹🇼' },
@@ -680,6 +719,9 @@ createApp({
             profile: null,
             appLogo: null,        // 全站 Logo（管理員可在後台隨時更換）
             savingAppLogo: false,
+            themeColor: '',       // 主題色（管理員可設定）
+            emailCfg: { service: '', template: '', public: '', notify: '' }, // EmailJS（後台可設定）
+            savingSysCfg: false,
             // 申請 / 邀請
             showApplyModal: false, applying: false, applyError: '',
             applyForm: { username: '', email: '', birthday: '' },
@@ -703,7 +745,7 @@ createApp({
             displayCurrency: 'TWD',
             // 掃描
             isScanning: false, scanner: null, showQuickForm: false, scanHint: '',
-            scanMode: localStorage.getItem('scanMode') || 'auto',
+            scanMode: localStorage.getItem('scanMode') || '1d',   // 預設一維條碼（掃商品最快）
             scanModes: [{ v: 'auto', label: '自動' }, { v: '1d', label: '一維條碼' }, { v: '2d', label: 'QR Code' }],
             torchAvailable: false, torchOn: false, videoTrack: null,
             // 原生 BarcodeDetector 掃描（支援的瀏覽器優先用，準確度最佳）
@@ -1276,12 +1318,16 @@ createApp({
                 }
                 const total = parseInt(text.slice(29, 37), 16);   // 總計額（16 進位）
                 if (!isFinite(total) || total <= 0) return null;
+                // 呼叫財政部 API 查明細所需欄位（皆來自 QR 固定區段）
+                const randomNumber = text.slice(17, 21);   // 隨機碼
+                const sellerID     = text.slice(45, 53);   // 賣方統編
+                const encrypt      = text.slice(53, 77);   // 加密驗證碼
                 let items = [];
                 try {
                     const rest = text.slice(77);
                     if (rest.includes(':')) {
                         const parts = rest.split(':');         // [完整筆數, 本張筆數, 編碼, 品名,數量,單價, …]
-                        if (parts[2] === '1') {                 // 僅 UTF-8 編碼才讀品名（Big5 會亂碼）
+                        if (parts[2] === '1') {                 // 僅 UTF-8 編碼才直接讀品名（Big5 會亂碼，改靠 API）
                             for (let i = 3; i + 2 < parts.length; i += 3) {
                                 const nm = (parts[i] || '').trim();
                                 if (nm && /[一-龥A-Za-z]/.test(nm)) items.push(nm);
@@ -1289,8 +1335,31 @@ createApp({
                         }
                     }
                 } catch (_) {}
-                return { invoiceNo, date, total, items };
+                return { invoiceNo, date, total, items, randomNumber, sellerID, encrypt };
             } catch (_) { return null; }
+        },
+        /* 透過 Supabase Edge Function（invoice）代理財政部 API 取得發票品項。
+           未部署 / 未設定 AppID / 查無資料 → 回 null（畫面仍保留總額與日期）。*/
+        async fetchInvoiceDetail(inv) {
+            try {
+                const { data, error } = await sb.functions.invoke('invoice', {
+                    body: {
+                        invNum: inv.invoiceNo,
+                        invDate: (inv.date || '').replace(/-/g, '/'),
+                        encrypt: inv.encrypt,
+                        sellerID: inv.sellerID,
+                        randomNumber: inv.randomNumber,
+                    },
+                });
+                if (error) { console.warn('發票明細查詢失敗（Edge Function）：', error.message || error); return null; }
+                if (data && Array.isArray(data.details) && data.details.length) {
+                    return data.details.map(d => (d.description || '').trim()).filter(Boolean);
+                }
+                if (data && data.code && String(data.code) !== '200') {
+                    console.warn('財政部 API 回應：', data.code, data.msg);
+                }
+                return null;
+            } catch (e) { console.warn('fetchInvoiceDetail 例外：', e); return null; }
         },
         async onScan(text) {
             await this.stopScanner();
@@ -1299,17 +1368,28 @@ createApp({
             text = (text || '').trim();
             if (!text) { alert('沒有讀到任何內容，請再試一次'); return; }
 
-            // 0) 台灣電子發票 QR → 直接帶入日期與總額
+            // 0) 台灣電子發票 QR → 帶入日期與總額，再向財政部 API 查真實品項
             const inv = this.parseTwInvoice(text);
             if (inv) {
                 this.form = { ...this.emptyForm(),
-                    item_name: (inv.items && inv.items.length) ? inv.items.join('、').slice(0, 40) : ('電子發票 ' + inv.invoiceNo),
+                    item_name: (inv.items && inv.items.length) ? inv.items.join('、').slice(0, 60) : ('電子發票 ' + inv.invoiceNo),
                     barcode: inv.invoiceNo, currency: 'TWD',
                     amount: inv.total, amount_twd: inv.total,
                     expense_date: inv.date || this.emptyForm().expense_date };
                 this.syncAmountStrings();
+                this.showQuickForm = true;
+                // 若已啟用財政部 API（需認證公司 AppID + 部署 Edge Function）→ 補抓每項品名
+                if (INVOICE_DETAIL_API_ENABLED) {
+                    this.scanHint = '（電子發票 ' + (inv.date || '') + '，總額 NT$' + this.formatNumber(inv.total) + '，查詢品項中…）';
+                    const names = await this.fetchInvoiceDetail(inv);
+                    if (names && names.length) {
+                        this.form.item_name = names.join('、').slice(0, 80);
+                        this.scanHint = '（電子發票 ' + (inv.date || '') + '，共 ' + names.length + ' 項，總額 NT$' + this.formatNumber(inv.total) + '，可修改）';
+                        return;
+                    }
+                }
                 this.scanHint = '（電子發票 ' + (inv.date || '') + '，總額 NT$' + this.formatNumber(inv.total) + '，可修改）';
-                this.showQuickForm = true; return;
+                return;
             }
 
             // 1) 自訂 QR（JSON）
@@ -1412,32 +1492,44 @@ createApp({
             this.applyError = '';
             this.showApplyModal = true;
         },
-        /* ───── EmailJS 寄信 ───── */
+        /* ───── EmailJS 寄信（優先用後台設定，其次程式常數）───── */
+        _emailCfg() {
+            const c = this.emailCfg || {};
+            return {
+                service: c.service || EMAILJS.SERVICE_ID,
+                template: c.template || EMAILJS.TEMPLATE_ID,
+                public: c.public || EMAILJS.PUBLIC_KEY,
+                notify: c.notify || EMAILJS.NOTIFY_EMAIL || 'markno.5.studio@gmail.com',
+            };
+        },
         emailReady() {
-            return typeof emailjs !== 'undefined' && EMAILJS.SERVICE_ID && EMAILJS.TEMPLATE_ID && EMAILJS.PUBLIC_KEY;
+            const c = this._emailCfg();
+            return typeof emailjs !== 'undefined' && c.service && c.template && c.public;
         },
         async sendApplyNotify(f) {                 // 有人申請 → 通知管理員
             if (!this.emailReady()) return;
+            const c = this._emailCfg();
             try {
-                await emailjs.send(EMAILJS.SERVICE_ID, EMAILJS.TEMPLATE_ID, {
-                    to_email: EMAILJS.NOTIFY_EMAIL,
+                await emailjs.send(c.service, c.template, {
+                    to_email: c.notify,
                     user_name: f.username || '', user_email: f.email || '',
                     invite_code: '（請到管理後台核發）',
                     site_name: '小桃記帳', site_url: location.origin + location.pathname,
                     message: '有新的使用申請：' + (f.username || '') + '（' + (f.email || '') + '），請到「管理後台」核發邀請碼。',
-                }, { publicKey: EMAILJS.PUBLIC_KEY });
+                }, { publicKey: c.public });
             } catch (e) { console.warn('申請通知信寄送失敗：', e && (e.text || e.message || e)); }
         },
         async sendInviteCodeEmail(toEmail, code, username) {   // 核發 → 把邀請碼寄給申請人
             if (!this.emailReady()) return false;
+            const c = this._emailCfg();
             try {
-                await emailjs.send(EMAILJS.SERVICE_ID, EMAILJS.TEMPLATE_ID, {
+                await emailjs.send(c.service, c.template, {
                     to_email: toEmail,
                     user_name: username || toEmail.split('@')[0], user_email: toEmail,
                     invite_code: code,
                     site_name: '小桃記帳', site_url: location.origin + location.pathname,
                     message: '您的小桃記帳邀請碼是：' + code + '。請到網站點「我有邀請碼，立即註冊」完成註冊與登入。',
-                }, { publicKey: EMAILJS.PUBLIC_KEY });
+                }, { publicKey: c.public });
                 return true;
             } catch (e) { console.warn('邀請碼信寄送失敗：', e && (e.text || e.message || e)); return false; }
         },
@@ -1676,13 +1768,18 @@ createApp({
             this.showAdminPanel = true;
         },
         async addBook() {
-            // 先選類型：日常生活 or 旅遊
-            const daily = confirm('要建立哪一種帳本？\n\n【確定】＝🏠 日常生活記帳（預設台幣、隱藏旅遊/醫美欄位）\n【取消】＝✈️ 旅遊記帳（外幣換算、行前/醫美）');
-            const defTitle = daily ? '日常記帳' : '新的旅程';
-            const title = prompt('帳本 / 專案名稱', defTitle);
+            // 三選一（預設 1＝日常）：1 日常 / 2 旅遊 / 3 醫美保養品
+            const pick = (prompt('要建立哪一種帳本？輸入數字：\n\n1 = 🏠 日常記帳（預設・台幣、隱藏旅遊/醫美欄位）\n2 = ✈️ 旅遊記帳（外幣換算、行前/醫美）\n3 = 💄 醫美保養品（外幣換算，預設分類美妝保養）', '1') || '1').trim();
+            const TYPES = {
+                '1': { daily: true,  title: '日常記帳',     cat: null },
+                '2': { daily: false, title: '新的旅程',     cat: null },
+                '3': { daily: false, title: '醫美保養購物', cat: '美妝保養' },
+            };
+            const t = TYPES[pick] || TYPES['1'];
+            const title = prompt('帳本 / 專案名稱', t.title);
             if (!title) return;
             let { data, error } = await sb.from('travel_settings')
-                .insert([{ title, tag: '', logo: null, owner_id: this.user.id, is_daily: daily }]).select().single();
+                .insert([{ title, tag: '', logo: null, owner_id: this.user.id, is_daily: t.daily }]).select().single();
             // 若資料庫尚未新增 is_daily 欄位，退回不含該欄位再建立一次，並提醒跑 SQL
             if (error && /is_daily|budget|schema cache/i.test(error.message || '')) {
                 ({ data, error } = await sb.from('travel_settings')
@@ -1695,6 +1792,7 @@ createApp({
             await this.loadAll();
             this.currentBookId = data.id;
             this.resetForm();
+            if (t.cat) { await this.ensureCategory(t.cat, '💄'); this.form.category = t.cat; }
             this.openAdminPanel();
         },
         async deleteBook() {
@@ -1724,9 +1822,39 @@ createApp({
         /* ───── 全站 Logo（管理員可隨時更換）───── */
         async loadAppSettings() {
             try {
-                const { data } = await sb.from('app_settings').select('logo').eq('id', 1).maybeSingle();
-                if (data && data.logo) this.appLogo = data.logo;
+                const { data } = await sb.from('app_settings').select('*').eq('id', 1).maybeSingle();
+                if (data) {
+                    if (data.logo) this.appLogo = data.logo;
+                    if (data.theme_color) { this.themeColor = data.theme_color; this.applyTheme(data.theme_color); }
+                    this.emailCfg = {
+                        service: data.emailjs_service || '', template: data.emailjs_template || '',
+                        public: data.emailjs_public || '', notify: data.notify_email || '',
+                    };
+                }
             } catch (_) {}
+        },
+        /* 套用主題色：注入 <style> 覆蓋 App 用到的 pink-* 類別 + 背景漸層 */
+        applyTheme(hex) {
+            if (!/^#[0-9a-fA-F]{6}$/.test(hex || '')) { const el = document.getElementById('theme-override'); if (el) el.remove(); return; }
+            const mix = (h, p, white) => {
+                const r = parseInt(h.slice(1, 3), 16), g = parseInt(h.slice(3, 5), 16), b = parseInt(h.slice(5, 7), 16);
+                const t = white ? 255 : 0;
+                const f = c => Math.round(c + (t - c) * p).toString(16).padStart(2, '0');
+                return '#' + f(r) + f(g) + f(b);
+            };
+            const base = hex, dark = mix(hex, 0.18, false);
+            const l100 = mix(hex, 0.85, true), l200 = mix(hex, 0.72, true);
+            const g1 = mix(hex, 0.93, true), g2 = mix(hex, 0.85, true), g3 = mix(hex, 0.75, true);
+            const css = `
+                body{background:linear-gradient(160deg, ${g1} 0%, ${g2} 45%, ${g3} 100%)!important;}
+                .bg-pink-500{background-color:${base}!important;}
+                .bg-pink-600{background-color:${dark}!important;}
+                .text-pink-500,.text-pink-600,.text-pink-400{color:${base}!important;}
+                .bg-pink-100,.bg-pink-100\\/80{background-color:${l100}!important;}
+                .border-pink-200{border-color:${l200}!important;}`;
+            let el = document.getElementById('theme-override');
+            if (!el) { el = document.createElement('style'); el.id = 'theme-override'; document.head.appendChild(el); }
+            el.textContent = css;
         },
         onAppLogoPick(ev) {
             const file = ev.target.files[0];
@@ -1759,6 +1887,34 @@ createApp({
             if (error) return alert('還原失敗：' + error.message);
             this.appLogo = null;
             alert('✅ 已還原為預設 Logo');
+        },
+        /* 即時預覽主題色（輸入時套用，但尚未存到資料庫）*/
+        onThemeInput() { this.applyTheme(this.themeColor); },
+        async resetTheme() {
+            this.themeColor = '';
+            this.applyTheme('');
+            const { error } = await sb.from('app_settings').update({ theme_color: null }).eq('id', 1);
+            if (!error) alert('✅ 已還原預設粉紅主題');
+        },
+        /* 儲存主題色 + EmailJS 設定（全站、所有人下次開啟生效）*/
+        async saveSysConfig() {
+            this.savingSysCfg = true;
+            const { error } = await sb.from('app_settings').update({
+                theme_color: this.themeColor || null,
+                emailjs_service: this.emailCfg.service || null,
+                emailjs_template: this.emailCfg.template || null,
+                emailjs_public: this.emailCfg.public || null,
+                notify_email: this.emailCfg.notify || null,
+            }).eq('id', 1);
+            this.savingSysCfg = false;
+            if (error) {
+                if (/column|schema cache|app_settings/i.test(error.message || '')) {
+                    return alert('❌ 資料表缺欄位！請先到 Supabase SQL Editor 執行最新版 supabase_app_logo.sql 後再試。\n\n' + error.message);
+                }
+                return alert('儲存失敗：' + error.message);
+            }
+            this.applyTheme(this.themeColor);
+            alert('✅ 後台設定已儲存（主題色／EmailJS）');
         },
         async saveSettings() {
             const { id, ...fields } = this.settingsForm;
