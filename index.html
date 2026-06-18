@@ -83,6 +83,12 @@
 <template v-else>
 <template v-if="bookSettings || isAdmin">
 
+    <!-- ───── 內建瀏覽器警告（相機無法對焦）───── -->
+    <div v-if="isInAppBrowser" class="mb-2 p-2.5 rounded-xl bg-amber-100 text-amber-800 text-[11px] leading-relaxed border border-amber-200">
+        ⚠ 你正在 <b>LINE 等 App 的內建瀏覽器</b>開啟，相機無法對焦掃描。<br>
+        請點右上角「<b>⋯</b>」選 <b>「用預設瀏覽器 / Safari 開啟」</b>；或掃描時改用 <b>「拍照掃描」</b>（原生相機，對焦正常）。
+    </div>
+
     <!-- ───── 頂部控制列 ───── -->
     <div class="flex justify-between items-center mb-2 flex-wrap gap-1.5">
         <div class="flex items-center gap-1.5">
@@ -92,7 +98,7 @@
             </button>
             <label class="text-xs bg-white/70 text-pink-600 px-3 py-1.5 rounded-full flex items-center gap-1 shadow-sm cursor-pointer border border-pink-200">
                 <span class="material-icons text-xs">photo_camera</span> 拍照掃描
-                <input type="file" accept="image/*" capture="environment" class="hidden" @change="scanImageFile">
+                <input id="photoCaptureInput" type="file" accept="image/*" capture="environment" class="hidden" @change="scanImageFile">
             </label>
             <label class="text-xs bg-white/70 text-pink-600 px-3 py-1.5 rounded-full flex items-center gap-1 shadow-sm cursor-pointer border border-pink-200">
                 <span class="material-icons text-xs">photo_library</span> 相簿選圖
@@ -164,8 +170,11 @@
                 <span class="material-icons text-sm">{{ torchOn ? 'flash_on' : 'flash_off' }}</span>閃光燈
             </button>
         </div>
-        <p class="text-center text-[10px] text-gray-500 mt-1">一維：EAN/UPC/Code128｜二維：QR Code{{ zoomAvailable ? '・用滑桿放大條碼' : '' }}</p>
-        <p class="text-center text-[10px] text-pink-500 mt-0.5">📷 對焦糊掉掃不到？改用上方「拍照/相片掃描」最準（用原生相機拍清楚再辨識）</p>
+        <p class="text-center text-[10px] text-gray-500 mt-1">距離拉遠約 15~20cm 讓相機對到焦{{ zoomAvailable ? '，再用滑桿放大' : '' }}；發票請掃「左邊」QR</p>
+        <!-- 對焦不到時最可靠：一鍵改用原生相機拍照 -->
+        <button @click="useNativeCapture" class="w-full mt-2 bg-pink-500 text-white py-2.5 rounded-xl font-bold text-sm flex items-center justify-center gap-1 shadow-sm">
+            <span class="material-icons text-base">photo_camera</span> 對焦掃不到？改用「拍照掃描」最準
+        </button>
     </div>
 
     <template v-if="canWrite">
@@ -760,7 +769,7 @@ createApp({
             displayCurrency: 'TWD',
             // 掃描
             isScanning: false, scanner: null, showQuickForm: false, scanHint: '',
-            scanMode: localStorage.getItem('scanMode') || '1d',   // 預設一維條碼（掃商品最快）
+            scanMode: localStorage.getItem('scanMode') || 'auto',   // 預設自動（同時認一維條碼與 QR，掃發票才讀得到）
             scanModes: [{ v: 'auto', label: '自動' }, { v: '1d', label: '一維條碼' }, { v: '2d', label: 'QR Code' }],
             torchAvailable: false, torchOn: false, videoTrack: null,
             zoomAvailable: false, zoomMin: 1, zoomMax: 1, zoomStep: 0.1, zoomVal: 1,
@@ -1123,8 +1132,18 @@ createApp({
             this.videoTrack = null; this.torchAvailable = false; this.torchOn = false;
             this.zoomAvailable = false; this.zoomVal = 1;
         },
+        async useNativeCapture() {           // 一鍵：關掉即時相機，改用原生相機拍照（對焦正常）
+            await this.stopScanner();
+            const inp = document.getElementById('photoCaptureInput');
+            if (inp) inp.click();
+        },
         async toggleScanner() {
             if (this.isScanning) { await this.stopScanner(); return; }
+            // iOS 內建瀏覽器（LINE/FB/IG）即時相機無法對焦 → 直接改用原生相機拍照（對焦正常）
+            if (this.isIOS && this.isInAppBrowser) {
+                const go = confirm('在 LINE 等內建瀏覽器中，即時相機無法對焦掃描。\n\n【確定】＝用「原生相機拍照」掃描（對焦正常、最準）\n【取消】＝仍要開啟即時相機\n\n💡 最佳做法：右上角「⋯」用 Safari 開啟本網站。');
+                if (go) { const inp = document.getElementById('photoCaptureInput'); if (inp) inp.click(); return; }
+            }
             await this.startScanner();
         },
         async startScanner() {
@@ -1405,6 +1424,12 @@ createApp({
             if (!this.canWrite) { alert('此帳本僅供檢視，無法新增'); return; }
             text = (text || '').trim();
             if (!text) { alert('沒有讀到任何內容，請再試一次'); return; }
+
+            // 電子發票「右邊」的 QR（以 ** 開頭）只有部分品項、沒有日期金額 → 提示改掃左邊
+            if (/^\*\*/.test(text)) {
+                alert('這是電子發票「右邊」的 QR Code（只含部分品項，無日期金額）。\n請改掃「左邊」那個 QR Code，才能讀到日期與總金額。');
+                return;
+            }
 
             // 0) 台灣電子發票 QR → 帶入日期與總額，再向財政部 API 查真實品項
             const inv = this.parseTwInvoice(text);
