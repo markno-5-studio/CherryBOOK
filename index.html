@@ -6,7 +6,6 @@
     <meta name="theme-color" content="#fdf2f8">
     <title>小桃記帳｜旅遊記帳與條碼管理</title>
 
-    <!-- PWA -->
     <link rel="manifest" href="manifest.json">
     <link rel="apple-touch-icon" href="icons/icon-192.png">
     <link rel="icon" href="icons/icon-192.png">
@@ -18,7 +17,6 @@
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
     <script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
-    <!-- EmailJS（申請通知 / 寄送邀請碼）-->
     <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 
     <style>
@@ -37,10 +35,8 @@
 
 <div id="app" class="max-w-md mx-auto p-4 pb-24 min-h-screen relative">
 
-<!-- ════════ 0. 載入中 ════════ -->
 <div v-if="!authReady" class="text-center pt-40 text-gray-400 text-sm">載入中…</div>
 
-<!-- ════════ A. 未登入：Logo + 申請 / 登入 ════════ -->
 <template v-else-if="!user">
     <div class="pt-20 flex flex-col items-center text-center">
         <img :src="appLogo || 'icons/logo.png'" class="w-28 h-28 rounded-[28px] shadow-lg object-cover mb-5" alt="logo"
@@ -65,7 +61,6 @@
     </div>
 </template>
 
-<!-- ════════ B. 已登入但尚未啟用：輸入邀請碼 ════════ -->
 <template v-else-if="!isActive">
     <div class="pt-24 flex flex-col items-center text-center">
         <span class="material-icons text-5xl text-pink-400 mb-3">vpn_key</span>
@@ -79,17 +74,14 @@
     </div>
 </template>
 
-<!-- ════════ C. 正式 App（已啟用 / 管理員）════════ -->
 <template v-else>
 <template v-if="isActive">
 
-    <!-- ───── 內建瀏覽器警告（相機無法對焦）───── -->
     <div v-if="isInAppBrowser" class="mb-2 p-2.5 rounded-xl bg-amber-100 text-amber-800 text-[11px] leading-relaxed border border-amber-200">
         ⚠ 你正在 <b>LINE 等 App 的內建瀏覽器</b>開啟，相機無法對焦掃描。<br>
         請點右上角「<b>⋯</b>」選 <b>「用預設瀏覽器 / Safari 開啟」</b>；或掃描時改用 <b>「拍照掃描」</b>（原生相機，對焦正常）。
     </div>
 
-    <!-- ───── 頂部控制列 ───── -->
     <div class="flex justify-between items-center mb-2 flex-wrap gap-1.5">
         <div class="flex items-center gap-1.5">
             <button @click="toggleScanner" class="text-xs bg-pink-600 text-white px-3 py-1.5 rounded-full flex items-center gap-1 shadow-sm">
@@ -127,7 +119,6 @@
     </div>
     <p class="text-[11px] text-gray-500 mb-2">👤 {{ profile?.username }}（{{ user.email }}）{{ isAdmin ? '・管理員' : '' }}</p>
 
-    <!-- ───── 帳本 / 專案 切換 ───── -->
     <div class="flex items-center gap-2 mb-3">
         <span class="material-icons text-pink-500 text-lg shrink-0">menu_book</span>
         <select v-if="books.length" v-model="currentBookId" class="flex-1 text-sm font-medium border rounded-lg px-2 py-1.5 bg-white/70 shadow-sm">
@@ -141,21 +132,17 @@
         </button>
     </div>
 
-    <!-- 被分享的帳本唯讀提示 -->
     <p v-if="bookSettings && bookSettings.owner_id !== user.id && !isAdmin"
        class="text-[11px] text-orange-500 mb-2 flex items-center gap-1">
         <span class="material-icons text-xs">visibility</span> 這是別人分享給你的帳本，僅能檢視、無法修改。
     </p>
 
-    <!-- ───── 掃描區 ───── -->
     <div v-show="isScanning" class="mb-4 p-2 glass-card rounded-2xl border border-white/50 shadow-md">
-        <!-- 內建瀏覽器警告（LINE/FB/IG 內開啟，相機常無法對焦）-->
         <div v-if="isInAppBrowser" class="mb-2 p-2 rounded-lg bg-amber-100 text-amber-800 text-[11px] leading-relaxed">
             ⚠ 你正在 App 內建瀏覽器（如 LINE）開啟，相機對焦常失效。<br>
             請點右上角「⋯」選 <b>「用預設瀏覽器/Safari 開啟」</b>，掃描才會正常。
         </div>
         <div id="reader" class="w-full" @click="tapFocus"></div>
-        <!-- 變焦滑桿（放大條碼，避免靠太近而失焦；iOS 對焦的關鍵）-->
         <div v-if="zoomAvailable" class="flex items-center gap-2 mt-2 px-1">
             <span class="material-icons text-pink-500 text-sm shrink-0">zoom_in</span>
             <input type="range" :min="zoomMin" :max="zoomMax" :step="zoomStep" v-model="zoomVal" @input="setZoom" class="flex-1">
@@ -175,14 +162,12 @@
             </button>
         </div>
         <p class="text-center text-[10px] text-gray-500 mt-1">距離拉遠約 15~20cm 讓相機對到焦{{ zoomAvailable ? '，再用滑桿放大' : '' }}；發票請掃「左邊」QR</p>
-        <!-- 對焦不到時最可靠：一鍵改用原生相機拍照 -->
         <button @click="useNativeCapture" class="w-full mt-2 bg-pink-500 text-white py-2.5 rounded-xl font-bold text-sm flex items-center justify-center gap-1 shadow-sm">
             <span class="material-icons text-base">photo_camera</span> 對焦掃不到？改用「拍照掃描」最準
         </button>
     </div>
 
     <template v-if="canWrite">
-    <!-- ───── 標題（含可更換 Logo）───── -->
     <div v-if="bookSettings" class="mb-3 pt-2">
         <div class="flex items-center justify-between">
             <h1 class="text-2xl font-bold tracking-wider flex items-center gap-2">
@@ -200,7 +185,6 @@
     </div>
 
     <template v-if="bookSettings">
-    <!-- ───── 日期 + 天氣列 ───── -->
     <div class="glass-card rounded-[14px] border border-white/40 shadow-sm px-3 py-2 mb-3 flex items-center justify-between text-[11px]">
         <div class="flex items-center gap-1 text-gray-600">
             <span class="material-icons text-[14px] text-pink-500">event</span>
@@ -218,7 +202,6 @@
         </div>
     </div>
 
-    <!-- ───── 即時匯率列（日常生活模式隱藏）───── -->
     <div v-if="!isDaily" class="glass-card rounded-[14px] border border-white/40 shadow-sm px-3 py-2 mb-4 flex items-center justify-between text-[11px]">
         <div class="flex items-center gap-1 text-gray-600">
             <span class="material-icons text-[14px] text-pink-500">currency_exchange</span>
@@ -233,7 +216,6 @@
         </select>
     </div>
 
-    <!-- ───── 看板 ───── -->
     <div class="grid grid-cols-2 gap-3 mb-4">
         <div class="glass-card p-4 rounded-[16px] shadow-sm border border-white/40">
             <p class="text-xs text-gray-500 font-medium">{{ isDaily ? '總支出' : '旅費總計（含行前）' }}</p>
@@ -255,7 +237,6 @@
         </div>
     </div>
 
-    <!-- ───── 預算進度條 ───── -->
     <div v-if="hasBudget" class="glass-card rounded-[14px] border border-white/40 shadow-sm px-3 py-2.5 mb-4">
         <div class="flex justify-between text-[11px] text-gray-600 mb-1">
             <span>💰 預算 NT$ {{ formatNumber(bookSettings.budget) }}</span>
@@ -268,7 +249,6 @@
         </div>
     </div>
 
-    <!-- ───── 新增 / 編輯表單（可寫入者可見；含手動輸入）───── -->
     <div v-if="canWrite || showQuickForm" class="glass-card p-4 rounded-[16px] shadow-md border border-white/60 mb-6">
         <h3 class="text-sm font-bold mb-3 flex items-start gap-1 flex-wrap break-all">
             <span class="material-icons text-sm shrink-0">{{ editingId ? 'edit' : 'add_circle' }}</span>
@@ -313,7 +293,6 @@
         </div>
     </div>
 
-    <!-- ───── Tabs ───── -->
     <div class="flex gap-2 mb-3 bg-white/40 p-1 rounded-full shadow-inner">
         <button @click="currentTab = 'detail'"  :class="['w-1/2 py-2 text-sm font-medium rounded-full transition-all', currentTab === 'detail'  ? 'bg-pink-500 text-white shadow' : 'text-gray-600']">📅 每日明細</button>
         <button @click="currentTab = 'summary'" :class="['w-1/2 py-2 text-sm font-medium rounded-full transition-all', currentTab === 'summary' ? 'bg-pink-500 text-white shadow' : 'text-gray-600']">📊 分類總結</button>
@@ -327,7 +306,6 @@
         </select>
     </div>
 
-    <!-- ───── 每日明細 ───── -->
     <div v-if="currentTab === 'detail'" class="space-y-3">
         <div v-for="group in groupedExpenses" :key="group.key" class="glass-card rounded-[16px] shadow-sm border border-white/40 overflow-hidden">
             <div @click="toggleGroup(group.key)" class="p-4 flex items-center justify-between cursor-pointer">
@@ -378,7 +356,6 @@
         <p v-if="!groupedExpenses.length" class="text-center text-gray-400 text-sm py-8">尚無消費紀錄，掃條碼或手動新增吧 🌸</p>
     </div>
 
-    <!-- ───── 分類總結 ───── -->
     <div v-if="currentTab === 'summary'" class="space-y-4">
         <div class="grid grid-cols-2 gap-3">
             <div class="glass-card p-3 rounded-[14px] shadow-sm border border-white/40 text-center">
@@ -415,7 +392,6 @@
 </template>
 </template>
 
-    <!-- ════════ 燈箱：登入 ════════ -->
     <div v-if="showLoginModal" class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
         <div class="bg-white p-6 rounded-2xl max-w-sm w-full shadow-lg">
             <h2 class="text-lg font-bold mb-4 flex items-center gap-1"><span class="material-icons">login</span> 登入</h2>
@@ -431,7 +407,6 @@
         </div>
     </div>
 
-    <!-- ════════ 燈箱：申請使用（填寫個人資料，不建帳號）════════ -->
     <div v-if="showApplyModal" class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
         <div class="bg-white p-6 rounded-2xl max-w-sm w-full shadow-lg">
             <h2 class="text-lg font-bold mb-1 flex items-center gap-1"><span class="material-icons">person_add</span> 申請使用</h2>
@@ -454,7 +429,6 @@
         </div>
     </div>
 
-    <!-- ════════ 燈箱：用邀請碼註冊（建立 Auth 帳號）════════ -->
     <div v-if="showRegisterModal" class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
         <div class="bg-white p-6 rounded-2xl max-w-sm w-full shadow-lg">
             <h2 class="text-lg font-bold mb-1 flex items-center gap-1"><span class="material-icons">vpn_key</span> 用邀請碼註冊</h2>
@@ -476,7 +450,6 @@
         </div>
     </div>
 
-    <!-- ════════ 燈箱：分享帳本 ════════ -->
     <div v-if="showShareModal" class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
         <div class="bg-white p-6 rounded-2xl max-w-sm w-full shadow-lg space-y-4">
             <h2 class="text-lg font-bold flex items-center gap-1"><span class="material-icons">share</span> 分享這本帳本</h2>
@@ -500,12 +473,10 @@
         </div>
     </div>
 
-    <!-- ════════ 燈箱：管理後台（管理員）════════ -->
     <div v-if="showSysPanel" class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-start justify-center z-50 p-4 overflow-y-auto">
         <div class="bg-white p-6 rounded-2xl max-w-md w-full shadow-lg my-8 space-y-6">
             <h2 class="text-lg font-bold flex items-center gap-1"><span class="material-icons">manage_accounts</span> 管理後台</h2>
 
-            <!-- 網站 Logo（全站，登入頁也會換）-->
             <div class="space-y-2 text-xs border rounded-xl p-3">
                 <p class="font-bold text-gray-700">🖼️ 網站 Logo（全站・登入頁也會套用）</p>
                 <div class="flex items-center gap-3">
@@ -518,7 +489,6 @@
                 </div>
             </div>
 
-            <!-- 主題顏色 -->
             <div class="space-y-2 text-xs border rounded-xl p-3">
                 <p class="font-bold text-gray-700">🎨 網頁主題顏色</p>
                 <div class="flex items-center gap-3 flex-wrap">
@@ -529,7 +499,6 @@
                 <p class="text-[10px] text-gray-400">選色後會即時預覽，按下方「儲存後台設定」才會套用給所有人。</p>
             </div>
 
-            <!-- EmailJS 設定 -->
             <div class="space-y-2 text-xs border rounded-xl p-3">
                 <p class="font-bold text-gray-700">📧 EmailJS 設定（自動寄送邀請碼 / 申請通知）</p>
                 <input v-model="emailCfg.service" placeholder="Service ID（例：service_xxx）" class="w-full p-2 border rounded-lg">
@@ -539,19 +508,16 @@
                 <p class="text-[10px] text-gray-400 break-all">模板變數：&#123;&#123;to_email&#125;&#125; &#123;&#123;user_name&#125;&#125; &#123;&#123;user_email&#125;&#125; &#123;&#123;invite_code&#125;&#125; &#123;&#123;site_name&#125;&#125; &#123;&#123;site_url&#125;&#125; &#123;&#123;message&#125;&#125;；To Email 需設成 &#123;&#123;to_email&#125;&#125;。</p>
             </div>
 
-            <!-- 管理員帳號設定 -->
             <div class="space-y-2 text-xs border rounded-xl p-3">
                 <p class="font-bold text-gray-700">🛡️ 管理員帳號（Email，多個用逗號分隔）</p>
                 <input v-model="adminEmailsInput" placeholder="markno.5.studio@gmail.com" class="w-full p-2 border rounded-lg">
                 <p class="text-[10px] text-gray-400">清單內的 Email 登入後即為管理員。新增的人「下次登入」生效。<br>密碼請各自在「設定 → 修改登入密碼」變更（預設 markno.5.studio@gmail.com / 88888）。</p>
             </div>
 
-            <!-- 儲存後台設定（主題色 + EmailJS + 管理員）-->
             <button @click="saveSysConfig" :disabled="savingSysCfg" class="w-full bg-indigo-500 text-white py-2 rounded-lg font-bold disabled:opacity-50">
                 {{ savingSysCfg ? '儲存中…' : '💾 儲存後台設定（主題色 / EmailJS / 管理員）' }}
             </button>
 
-            <!-- 產生邀請碼 -->
             <div class="space-y-2 text-xs border rounded-xl p-3">
                 <p class="font-bold text-gray-700">🔑 產生邀請碼</p>
                 <select v-model="newCode.email" class="w-full p-2 border rounded-lg">
@@ -565,7 +531,6 @@
                 <button @click="createInviteCode" class="w-full bg-pink-500 text-white py-2 rounded-lg font-bold">確認新增</button>
             </div>
 
-            <!-- 申請清單 -->
             <div class="space-y-1 text-xs">
                 <p class="font-bold text-gray-700">📋 帳號申請</p>
                 <div v-if="!adminApps.length" class="text-gray-400">目前沒有申請</div>
@@ -578,7 +543,6 @@
                 </div>
             </div>
 
-            <!-- 邀請碼狀態 -->
             <div class="space-y-1 text-xs">
                 <p class="font-bold text-gray-700">🎟️ 邀請碼狀態</p>
                 <div v-for="c in adminCodes" :key="c.id" class="flex justify-between items-center py-1 border-b last:border-none">
@@ -590,7 +554,6 @@
                 </div>
             </div>
 
-            <!-- 使用者管理 -->
             <div class="space-y-1 text-xs">
                 <p class="font-bold text-gray-700">👥 使用者</p>
                 <div v-for="u in adminUsers" :key="u.id" class="flex justify-between items-center py-1 border-b last:border-none">
@@ -601,7 +564,6 @@
                 </div>
             </div>
 
-            <!-- 分享連結管理 -->
             <div class="space-y-1 text-xs">
                 <p class="font-bold text-gray-700">🔗 所有分享連結</p>
                 <div v-if="!adminShares.length" class="text-gray-400">目前沒有分享</div>
@@ -617,7 +579,6 @@
         </div>
     </div>
 
-    <!-- ════════ 燈箱：帳本設定 ════════ -->
     <div v-if="showAdminPanel" class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-start justify-center z-50 p-4 overflow-y-auto">
         <div class="bg-white p-6 rounded-2xl max-w-sm w-full shadow-lg my-8 space-y-5">
             <h2 class="text-lg font-bold flex items-center gap-1"><span class="material-icons">settings</span> 帳本設定</h2>
@@ -699,28 +660,13 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 /* 管理員信箱（在此清單內者登入即為管理員）*/
 const ADMIN_EMAILS = ['markno.5.studio@gmail.com'];
 
-/* ════════ EmailJS（申請通知 + 寄送邀請碼）════════
- * 到 https://dashboard.emailjs.com 為「小桃記帳」新增一個 Service 與 Template，
- * 把下面三個值填上即可（留空＝不寄信，功能照常運作）。
- *   - SERVICE_ID ：Email Services 頁面該服務的 Service ID
- *   - TEMPLATE_ID：Email Templates 頁面該模板的 Template ID
- *   - PUBLIC_KEY ：Account → General → Public Key
- * 模板需用到的變數：{{to_email}} {{user_name}} {{user_email}} {{invite_code}} {{site_name}} {{site_url}} {{message}}
- * 並把模板的「To Email」欄位設成 {{to_email}}（收件者才會正確）。
- */
 const EMAILJS = {
-    SERVICE_ID:  '',                              // ← 填入小桃記帳的 Service ID
-    TEMPLATE_ID: '',                             // ← 填入小桃記帳的 Template ID
-    PUBLIC_KEY:  '',                             // ← 填入 Public Key
-    NOTIFY_EMAIL: 'markno.5.studio@gmail.com',    // 有人申請時，通知信寄到這個信箱（管理員）
+    SERVICE_ID:  '',                              
+    TEMPLATE_ID: '',                             
+    PUBLIC_KEY:  '',                             
+    NOTIFY_EMAIL: 'markno.5.studio@gmail.com',    
 };
 
-/* ════════ 發票品項查詢（財政部 API）════════
- * ⚠ 財政部 2023 起：發票查詢 API 只開放「通過 ISO27001 認證的公司」申請，個人無法申請。
- * 預設關閉；掃發票只自動帶入「日期＋總金額」。
- * 若日後以公司名義申請到 AppID 並部署 Edge Function（edge-function-invoice.ts），
- * 再把下面改成 true 即可啟用「自動帶入每項品名」。
- */
 const INVOICE_DETAIL_API_ENABLED = false;
 
 /* ════════ 2. 幣別清單 ════════ */
@@ -752,17 +698,15 @@ createApp({
             authReady: false,
             user: null,
             profile: null,
-            appLogo: null,        // 全站 Logo（管理員可在後台隨時更換）
+            appLogo: null,        
             savingAppLogo: false,
-            themeColor: '',       // 主題色（管理員可設定）
-            emailCfg: { service: '', template: '', public: '', notify: '' }, // EmailJS（後台可設定）
-            adminEmailsInput: '',   // 管理員 Email 清單（後台可改）
+            themeColor: '',       
+            emailCfg: { service: '', template: '', public: '', notify: '' }, 
+            adminEmailsInput: '',   
             savingSysCfg: false,
-            // 申請 / 邀請
             showApplyModal: false, applying: false, applyError: '',
             applyForm: { username: '', email: '', birthday: '' },
             inviteInput: '', inviteError: '',
-            // 帳本 / 資料
             books: [],
             currentBookId: Number(localStorage.getItem('currentBookId')) || null,
             settingsForm: {},
@@ -774,33 +718,25 @@ createApp({
             currencyMeta: CURRENCY_META,
             rates: { TWD: 1 },
             ratesDate: '',
-            // 日期 + 天氣
             now: new Date(),
             weather: { temp: null, icon: '', loc: '' },
             rateCurrency: localStorage.getItem('rateCurrency') || 'KRW',
             displayCurrency: 'TWD',
-            // 掃描
             isScanning: false, scanner: null, showQuickForm: false, scanHint: '',
             aiScanning: false,
-            scanMode: localStorage.getItem('scanMode') || 'auto',   // 預設自動（同時認一維條碼與 QR，掃發票才讀得到）
+            scanMode: localStorage.getItem('scanMode') || 'auto',   
             scanModes: [{ v: 'auto', label: '自動' }, { v: '1d', label: '一維條碼' }, { v: '2d', label: 'QR Code' }],
             torchAvailable: false, torchOn: false, videoTrack: null,
             zoomAvailable: false, zoomMin: 1, zoomMax: 1, zoomStep: 0.1, zoomVal: 1,
-            // 原生 BarcodeDetector 掃描（支援的瀏覽器優先用，準確度最佳）
             nativeStream: null, nativeDetector: null, usingNative: false, nativeScanning: false, scanRAF: null,
-            // 登入
             showLoginModal: false, loginEmail: '', loginPass: '', loginError: '',
             showAdminPanel: false, newPass: '',
-            // 邀請碼註冊
             showRegisterModal: false, registering: false, registerError: '', registerOkMsg: '',
             registerForm: { email: '', inviteCode: '', password: '', username: '' },
-            // 分享
             showShareModal: false, shareEmail: '', shareMsg: '', shareOk: false, myShares: [],
-            // 管理後台
             showSysPanel: false,
             adminApps: [], adminCodes: [], adminUsers: [], adminShares: [],
             newCode: { email: '', code: '' },
-            // 表單
             saving: false, editingId: null,
             form: this.emptyForm(),
         };
@@ -819,7 +755,6 @@ createApp({
         bookSettings() { return this.books.find(b => b.id === this.currentBookId) || null; },
         isIOS() { return /iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); },
         isInAppBrowser() { return /Line|FBAN|FBAV|FB_IAB|Instagram|Messenger|MicroMessenger/i.test(navigator.userAgent || ''); },
-        /* 可寫入：自己的帳本 或 管理員 */
         canWrite() {
             if (!this.bookSettings) return false;
             return this.isAdmin || this.bookSettings.owner_id === this.user?.id || this.bookSettings.owner_id == null;
@@ -855,13 +790,11 @@ createApp({
                 .map(([cat, amount]) => ({ cat, amount, pct: (amount / total * 100).toFixed(1) }))
                 .sort((a, b) => b.amount - a.amount);
         },
-        /* 日常生活模式：隱藏旅遊專用欄位、預設台幣 */
         isDaily() { return !!this.bookSettings?.is_daily; },
-        /* 日常模式只顯示台幣（仍可手動展開外幣）；旅遊模式顯示全部 */
         shownCurrencies() { return CURRENCY_META; },
         amountPreview() {
             const s = (this.form.amountStr || '').trim();
-            if (!s || /^[0-9.]+$/.test(s)) return null;   // 純數字不顯示
+            if (!s || /^[0-9.]+$/.test(s)) return null;   
             const v = this.calcExpr(s);
             if (v == null) return null;
             if (isNaN(v)) return { bad: true, text: '算式無效' };
@@ -875,14 +808,12 @@ createApp({
             if (isNaN(v)) return { bad: true, text: '算式無效' };
             return { bad: false, text: '= ' + this.formatNumber(Math.round(v * 100) / 100) };
         },
-        /* 預算 */
         hasBudget() { return this.bookSettings && this.bookSettings.budget > 0; },
         budgetRemaining() { return (this.bookSettings?.budget || 0) - this.totalTwd; },
         budgetPct() {
             if (!this.hasBudget) return 0;
             return Math.min(100, Math.round(this.totalTwd / this.bookSettings.budget * 100));
         },
-        /* 每日平均花費（依有紀錄的天數） */
         avgPerDay() {
             const days = new Set(this.expenses.filter(e => !e.is_prepaid && e.expense_date).map(e => e.expense_date));
             const n = days.size || 1;
@@ -891,7 +822,6 @@ createApp({
         },
     },
     methods: {
-        /* ───── 小工具 ───── */
         emptyForm() {
             return { item_name: '', amount: null, currency: 'TWD', amount_twd: null,
                      amountStr: '', amountTwdStr: '',
@@ -907,12 +837,11 @@ createApp({
             this.editingId = null; this.showQuickForm = false; this.scanHint = '';
         },
         formatNumber(n) { return (n || 0).toLocaleString('zh-TW'); },
-        /* 安全算式解析：只允許數字與 + - * / ( ) . 空白，支援「120+58*2」 */
         calcExpr(str) {
             if (str == null) return null;
             const s = String(str).trim();
             if (s === '') return null;
-            if (!/^[0-9+\-*/().\s]+$/.test(s)) return NaN;   // 含非法字元
+            if (!/^[0-9+\-*/().\s]+$/.test(s)) return NaN;   
             try {
                 const v = Function('"use strict";return (' + s + ')')();
                 return (typeof v === 'number' && isFinite(v)) ? v : NaN;
@@ -958,8 +887,6 @@ createApp({
             const v = twd * this.rates[c];
             return (CURRENCY_META[c]?.symbol || c) + ' ' + this.formatNumber(Math.round(v * 100) / 100);
         },
-
-        /* ───── 匯率 ───── */
         async loadRates() {
             try {
                 const r = await fetch('https://open.er-api.com/v6/latest/TWD');
@@ -979,8 +906,6 @@ createApp({
             const r = this.rates[currency];
             return r ? Math.round(amount / r) : null;
         },
-
-        /* ───── 當地氣溫（open-meteo，免金鑰）───── */
         weatherIcon(code) {
             if (code === 0) return '☀️';
             if ([1, 2].includes(code)) return '🌤️';
@@ -1007,21 +932,18 @@ createApp({
             } catch (_) {}
         },
         loadWeather() {
-            // 先用快取墊著，避免閃爍
             const cache = localStorage.getItem('weatherCache');
             if (cache) { try { this.weather = JSON.parse(cache); } catch (_) {} }
-            // 1) 優先用瀏覽器定位（較準）
             if (navigator.geolocation) {
                 navigator.geolocation.getCurrentPosition(
                     (pos) => this.fetchWeatherWithName(pos.coords.latitude, pos.coords.longitude),
-                    () => this.loadWeatherByIp(),   // 拒絕 / 失敗 → 用 IP 定位
+                    () => this.loadWeatherByIp(),   
                     { timeout: 8000, maximumAge: 600000 }
                 );
             } else {
                 this.loadWeatherByIp();
             }
         },
-        /* 用座標反查地點名稱（免金鑰、支援 CORS），再抓天氣 */
         async fetchWeatherWithName(lat, lon) {
             let name = '所在地';
             try {
@@ -1038,8 +960,6 @@ createApp({
                 if (j.latitude) this.fetchWeather(j.latitude, j.longitude, j.city || j.country_name || '');
             } catch (_) {}
         },
-
-        /* ───── 資料載入 ───── */
         async loadAll() {
             const [{ data: books }, { data: items }, { data: cats }] = await Promise.all([
                 sb.from('travel_settings').select('*').order('id'),
@@ -1053,17 +973,13 @@ createApp({
             this.allExpenses = items || [];
             this.categories = cats || [];
         },
-
-        /* ───── 新增 / 編輯 / 刪除消費 ───── */
         async saveItem() {
             if (!this.canWrite) return alert('此帳本僅供檢視，無法新增');
             if (!this.form.item_name) return alert('請輸入項目名稱');
             if (!this.currentBookId) return alert('請先選擇或新增一本帳本');
-            // 確保算式已換算成數字
             this.onAmountInput(); this.onAmountTwdInput();
             if (this.form.amountStr && this.form.amount == null) return alert('金額算式無效，請檢查');
             if (this.form.amountTwdStr && this.form.amount_twd == null) return alert('台幣金額算式無效，請檢查');
-            // 寫入資料庫時去掉只在前端用的算式字串欄位
             const { amountStr, amountTwdStr, ...clean } = this.form;
             const f = { ...clean, book_id: this.currentBookId };
             if (f.currency === 'TWD' && f.amount && !f.amount_twd) f.amount_twd = f.amount;
@@ -1105,8 +1021,6 @@ createApp({
                 .eq('expense_date', group.key).eq('is_prepaid', false).eq('book_id', this.currentBookId);
             await this.loadAll();
         },
-
-        /* ───── 分類管理 ───── */
         async addCategory() {
             if (!this.newCat.name) return;
             await sb.from('travel_categories').insert([{ name: this.newCat.name, icon: this.newCat.icon || '📦' }]);
@@ -1128,8 +1042,6 @@ createApp({
             await this.loadAll();
             return name;
         },
-
-        /* ───── 掃描 ───── */
         scanFormats() {
             const F = Html5QrcodeSupportedFormats;
             const oned = [F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E, F.CODE_128, F.CODE_39, F.ITF];
@@ -1142,27 +1054,24 @@ createApp({
             if (this.isScanning) { await this.stopScanner(); await this.startScanner(); }
         },
         async stopScanner() {
-            // 原生 BarcodeDetector 掃描清理
             this.nativeScanning = false;
             if (this.scanRAF) { cancelAnimationFrame(this.scanRAF); this.scanRAF = null; }
             if (this.nativeStream) { try { this.nativeStream.getTracks().forEach(t => t.stop()); } catch (_) {} this.nativeStream = null; }
             if (this.usingNative) { const rd = document.getElementById('reader'); if (rd) rd.innerHTML = ''; }
             this.usingNative = false; this.nativeDetector = null;
-            // html5-qrcode 掃描清理
             try { await this.scanner?.stop(); } catch (_) {}
             try { await this.scanner?.clear(); } catch (_) {}
             this.scanner = null; this.isScanning = false;
             this.videoTrack = null; this.torchAvailable = false; this.torchOn = false;
             this.zoomAvailable = false; this.zoomVal = 1;
         },
-        async useNativeCapture() {           // 一鍵：關掉即時相機，改用原生相機拍照（對焦正常）
+        async useNativeCapture() {           
             await this.stopScanner();
             const inp = document.getElementById('photoCaptureInput');
             if (inp) inp.click();
         },
         async toggleScanner() {
             if (this.isScanning) { await this.stopScanner(); return; }
-            // iOS 內建瀏覽器（LINE/FB/IG）即時相機無法對焦 → 直接改用原生相機拍照（對焦正常）
             if (this.isIOS && this.isInAppBrowser) {
                 const go = confirm('在 LINE 等內建瀏覽器中，即時相機無法對焦掃描。\n\n【確定】＝用「原生相機拍照」掃描（對焦正常、最準）\n【取消】＝仍要開啟即時相機\n\n💡 最佳做法：右上角「⋯」用 Safari 開啟本網站。');
                 if (go) { const inp = document.getElementById('photoCaptureInput'); if (inp) inp.click(); return; }
@@ -1172,12 +1081,9 @@ createApp({
         async startScanner() {
             this.isScanning = true;
             await this.$nextTick();
-            // 優先用瀏覽器原生 BarcodeDetector（Android/Chrome 準確度遠勝 ZXing）
             if (await this.startNativeScanner()) return;
-            // 不支援（如 iOS Safari）→ 退回 html5-qrcode
             await this.startHtml5Scanner();
         },
-        /* 原生 BarcodeDetector：成功回 true，失敗回 false（交給 html5-qrcode）*/
         nativeFormats() {
             const oned = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf'];
             if (this.scanMode === '1d') return oned;
@@ -1240,13 +1146,9 @@ createApp({
                     formatsToSupport: this.scanFormats(),
                     experimentalFeatures: { useBarCodeDetectorIfSupported: true },
                 });
-                // ★ 第一個參數只能有「1 個 key」，所以高解析度/對焦要放在 cfg.videoConstraints
-                //   （videoConstraints 會直接傳給 getUserMedia，可含多個欄位）
-                //   讓 iOS 自選會自動對焦的主鏡頭（指定 deviceId 常會選到無法近拍的超廣角）。
                 const cfg = {
-                    fps: 30,   // 解碼頻率（每秒嘗試辨識次數）
+                    fps: 30,   
                     qrbox: (w, h) => {
-                        // 一維條碼用「寬扁框」更好對齊；二維用方框
                         if (this.scanMode === '1d') {
                             return { width: Math.floor(w * 0.92), height: Math.floor(Math.min(w, h) * 0.45) };
                         }
@@ -1259,13 +1161,12 @@ createApp({
                         facingMode: { ideal: 'environment' },
                         width: { ideal: 1920 },
                         height: { ideal: 1080 },
-                        frameRate: { ideal: 60, max: 60 },        // 畫面擷取最高 60 fps
-                        focusMode: 'continuous',                  // 連續自動對焦
-                        advanced: [{ focusMode: 'continuous' }],  // 部分裝置需放在 advanced
+                        frameRate: { ideal: 60, max: 60 },        
+                        focusMode: 'continuous',                  
+                        advanced: [{ focusMode: 'continuous' }],  
                     },
                 };
                 await this.scanner.start({ facingMode: 'environment' }, cfg, (text) => this.onScan(text), () => {});
-                // 啟動後拿到實際的影像軌道，套用「連續對焦」並偵測閃光燈
                 await this.$nextTick();
                 this.setupTrack();
             } catch (e) {
@@ -1281,17 +1182,14 @@ createApp({
                 if (track) this.applyCamControls(track);
             } catch (_) {}
         },
-        /* 套用相機能力：連續對焦（Android 有效）、變焦、閃光燈偵測 */
         applyCamControls(track) {
             if (!track) return;
             this.videoTrack = track;
             let caps = {};
             try { caps = track.getCapabilities ? track.getCapabilities() : {}; } catch (_) {}
-            // 連續自動對焦（Android 多半支援；iOS 不支援此 API，靠硬體自動對焦）
             if (caps.focusMode && caps.focusMode.includes('continuous')) {
                 track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
             }
-            // 變焦：讓使用者放大條碼，不必把手機貼太近（太近反而對不到焦）
             if (caps.zoom && typeof caps.zoom.max === 'number' && caps.zoom.max > (caps.zoom.min || 1)) {
                 this.zoomAvailable = true;
                 this.zoomMin = caps.zoom.min || 1;
@@ -1311,7 +1209,6 @@ createApp({
             try { track.applyConstraints({ advanced: [{ zoom: Number(this.zoomVal) }] }).catch(() => {}); } catch (_) {}
         },
         async tapFocus() {
-            // iOS 不支援程式對焦；此處對 Android single-shot 觸發再對焦，iOS 則無作用（請改用變焦或拍照）
             const track = this.videoTrack;
             if (!track || !track.getCapabilities) return;
             let caps = {};
@@ -1338,14 +1235,12 @@ createApp({
                 alert('此裝置/瀏覽器不支援閃光燈控制');
             }
         },
-        /* 從相片/拍照掃描：避開即時對焦問題，拍清楚一張再辨識，成功率高很多 */
         async scanImageFile(ev) {
             const file = ev.target.files && ev.target.files[0];
             ev.target.value = '';
             if (!file) return;
             if (!this.canWrite) { alert('此帳本僅供檢視，無法新增'); return; }
             await this.stopScanner();
-            // 1) 先用原生 BarcodeDetector 解析靜態圖（準確度高、支援的瀏覽器優先）
             if ('BarcodeDetector' in window) {
                 try {
                     const supported = await window.BarcodeDetector.getSupportedFormats();
@@ -1356,7 +1251,6 @@ createApp({
                     if (codes && codes.length && codes[0].rawValue) { await this.onScan(codes[0].rawValue); return; }
                 } catch (_) {}
             }
-            // 2) 退回 html5-qrcode 解析靜態圖（iOS Safari 等）
             const tmpId = 'reader-file-tmp';
             let el = document.getElementById(tmpId);
             if (!el) {
@@ -1364,7 +1258,6 @@ createApp({
                 el.style.cssText = 'position:absolute;left:-99999px;top:0;width:320px;';
                 document.body.appendChild(el);
             }
-            // 相片掃描一律支援「一維＋二維」全格式（不受掃描模式限制，發票 QR 才掃得到）
             const F = Html5QrcodeSupportedFormats;
             const allFormats = [F.QR_CODE, F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E, F.CODE_128, F.CODE_39, F.ITF];
             const h = new Html5Qrcode(tmpId, {
@@ -1380,7 +1273,6 @@ createApp({
                 try { await h.clear(); } catch (_) {}
             }
         },
-        /* 把圖片等比縮到最長邊 maxEdge，輸出 base64（控制上傳大小與 AI 成本）*/
         fileToResizedBase64(file, maxEdge) {
             return new Promise((resolve, reject) => {
                 const img = new Image();
@@ -1396,7 +1288,6 @@ createApp({
                 img.src = URL.createObjectURL(file);
             });
         },
-        /* AI 辨識收據/清單照片 → 讀出品項與金額 → 直接寫入明細 */
         async aiScanReceipt(ev) {
             const file = ev.target.files && ev.target.files[0];
             ev.target.value = '';
@@ -1409,7 +1300,7 @@ createApp({
                 const { data, error } = await sb.functions.invoke('ai-receipt', { body: { image: base64, mediaType } });
                 if (error) {
                     return alert('AI 辨識失敗：' + (error.message || error) +
-                        '\n\n（若顯示找不到函式，請先到 Supabase 部署 Edge Function「ai-receipt」並設定 ANTHROPIC_API_KEY）');
+                        '\n\n（若顯示找不到函式，請先到 Supabase 部署 Edge Function「ai-receipt」並設定 GEMINI_API_KEY）');
                 }
                 if (data && data.error) return alert('AI 辨識失敗：' + data.error);
                 const items = (data && data.items) || [];
@@ -1438,30 +1329,28 @@ createApp({
             this.form.amountStr = this.form.amount != null ? String(this.form.amount) : '';
             this.form.amountTwdStr = this.form.amount_twd != null ? String(this.form.amount_twd) : '';
         },
-        /* 台灣電子發票 QR Code 解析：直接讀出日期、總金額（品名僅 UTF-8 編碼時可讀）*/
         parseTwInvoice(text) {
             try {
                 if (!/^[A-Z]{2}\d{8}/.test(text) || text.length < 53) return null;
                 const invoiceNo = text.slice(0, 10);
-                const minguo = text.slice(10, 17);          // 民國 YYYMMDD
+                const minguo = text.slice(10, 17);          
                 let date = '';
                 if (/^\d{7}$/.test(minguo)) {
                     const y = 1911 + parseInt(minguo.slice(0, 3), 10);
                     const m = minguo.slice(3, 5), d = minguo.slice(5, 7);
                     if (+m >= 1 && +m <= 12 && +d >= 1 && +d <= 31) date = `${y}-${m}-${d}`;
                 }
-                const total = parseInt(text.slice(29, 37), 16);   // 總計額（16 進位）
+                const total = parseInt(text.slice(29, 37), 16);   
                 if (!isFinite(total) || total <= 0) return null;
-                // 呼叫財政部 API 查明細所需欄位（皆來自 QR 固定區段）
-                const randomNumber = text.slice(17, 21);   // 隨機碼
-                const sellerID     = text.slice(45, 53);   // 賣方統編
-                const encrypt      = text.slice(53, 77);   // 加密驗證碼
+                const randomNumber = text.slice(17, 21);   
+                const sellerID     = text.slice(45, 53);   
+                const encrypt      = text.slice(53, 77);   
                 let items = [];
                 try {
                     const rest = text.slice(77);
                     if (rest.includes(':')) {
-                        const parts = rest.split(':');         // [完整筆數, 本張筆數, 編碼, 品名,數量,單價, …]
-                        if (parts[2] === '1') {                 // 僅 UTF-8 編碼才直接讀品名（Big5 會亂碼，改靠 API）
+                        const parts = rest.split(':');         
+                        if (parts[2] === '1') {                 
                             for (let i = 3; i + 2 < parts.length; i += 3) {
                                 const nm = (parts[i] || '').trim();
                                 if (nm && /[一-龥A-Za-z]/.test(nm)) items.push(nm);
@@ -1472,8 +1361,6 @@ createApp({
                 return { invoiceNo, date, total, items, randomNumber, sellerID, encrypt };
             } catch (_) { return null; }
         },
-        /* 透過 Supabase Edge Function（invoice）代理財政部 API 取得發票品項。
-           未部署 / 未設定 AppID / 查無資料 → 回 null（畫面仍保留總額與日期）。*/
         async fetchInvoiceDetail(inv) {
             try {
                 const { data, error } = await sb.functions.invoke('invoice', {
@@ -1502,13 +1389,11 @@ createApp({
             text = (text || '').trim();
             if (!text) { alert('沒有讀到任何內容，請再試一次'); return; }
 
-            // 電子發票「右邊」的 QR（以 ** 開頭）只有部分品項、沒有日期金額 → 提示改掃左邊
             if (/^\*\*/.test(text)) {
                 alert('這是電子發票「右邊」的 QR Code（只含部分品項，無日期金額）。\n請改掃「左邊」那個 QR Code，才能讀到日期與總金額。');
                 return;
             }
 
-            // 0) 台灣電子發票 QR → 帶入日期與總額，再向財政部 API 查真實品項
             const inv = this.parseTwInvoice(text);
             if (inv) {
                 this.form = { ...this.emptyForm(),
@@ -1518,7 +1403,6 @@ createApp({
                     expense_date: inv.date || this.emptyForm().expense_date };
                 this.syncAmountStrings();
                 this.showQuickForm = true;
-                // 若已啟用財政部 API（需認證公司 AppID + 部署 Edge Function）→ 補抓每項品名
                 if (INVOICE_DETAIL_API_ENABLED) {
                     this.scanHint = '（電子發票 ' + (inv.date || '') + '，總額 NT$' + this.formatNumber(inv.total) + '，查詢品項中…）';
                     const names = await this.fetchInvoiceDetail(inv);
@@ -1532,7 +1416,6 @@ createApp({
                 return;
             }
 
-            // 1) 自訂 QR（JSON）
             try {
                 const o = JSON.parse(text);
                 if (o && o.name) {
@@ -1546,7 +1429,6 @@ createApp({
                 }
             } catch (_) {}
 
-            // 2) 商品條碼（純數字 6~14 碼才視為商品條碼）
             const isProductBarcode = /^\d{6,14}$/.test(text);
             this.form = { ...this.emptyForm(), barcode: text.slice(0, 64) };
             const prev = this.expenses.find(e => e.barcode === text.slice(0, 64));
@@ -1559,7 +1441,6 @@ createApp({
                 this.showQuickForm = true; return;
             }
             if (!isProductBarcode) {
-                // 不是商品條碼、也不是發票/JSON → 簡單顯示，不要把亂碼塞滿畫面
                 this.form.item_name = '';
                 this.scanHint = '（無法辨識此條碼內容，請手動輸入項目）';
                 this.showQuickForm = true; return;
@@ -1577,7 +1458,6 @@ createApp({
                 this.scanHint = '（查無商品資料，已建立暫名，請手動命名）';
             }
         },
-        /* 依序查 食品庫 / 美妝庫 / 一般商品庫（醫美購物多為化妝品，會落在美妝庫）*/
         async lookupProduct(code) {
             const dbs = [
                 { url: 'https://world.openfoodfacts.org',     src: '食品庫', defCat: null },
@@ -1606,32 +1486,34 @@ createApp({
             }
             return null;
         },
-
-        /* ───── 認證流程 ───── */
         async ensureProfile() {
             if (!this.user) { this.profile = null; return; }
-            const uid = this.user.id, email = this.user.email || '';
+            const uid = this.user.id, email = (this.user.email || '').toLowerCase();
+            const isAdminEmail = this.adminEmailSet().has(email);
+
             let { data: prof } = await sb.from('profiles').select('*').eq('id', uid).maybeSingle();
+
             if (!prof) {
                 const meta = this.user.user_metadata || {};
-                const isAdminEmail = this.adminEmailSet().has(email.toLowerCase());
                 const row = {
-                    id: uid, email,
+                    id: uid, email: this.user.email,
                     username: meta.username || email.split('@')[0],
                     birthday: meta.birthday || null,
                     role: isAdminEmail ? 'admin' : 'user',
                     status: isAdminEmail ? 'active' : 'pending',
                 };
-                // 若此帳號註冊時已用掉邀請碼（used_by = 本人），即使是「確認信」流程也直接啟用，
-                // 避免確認信點完登入後又卡在「輸入邀請碼」（且碼已被標記使用）。
                 if (!isAdminEmail) {
                     try {
                         const { data: codes } = await sb.from('invite_codes').select('id').eq('used_by', uid).limit(1);
                         if (codes && codes.length) row.status = 'active';
                     } catch (_) {}
                 }
-                const { data: inserted } = await sb.from('profiles').insert(row).select().maybeSingle();
+                const { data: inserted } = await sb.from('profiles').upsert(row).select().maybeSingle();
                 prof = inserted || row;
+            } else if (isAdminEmail && (prof.role !== 'admin' || prof.status !== 'active')) {
+                prof.role = 'admin';
+                prof.status = 'active';
+                await sb.from('profiles').update({ role: 'admin', status: 'active' }).eq('id', uid);
             }
             this.profile = prof;
         },
@@ -1640,7 +1522,6 @@ createApp({
             this.applyError = '';
             this.showApplyModal = true;
         },
-        /* ───── EmailJS 寄信（優先用後台設定，其次程式常數）───── */
         _emailCfg() {
             const c = this.emailCfg || {};
             return {
@@ -1654,7 +1535,7 @@ createApp({
             const c = this._emailCfg();
             return typeof emailjs !== 'undefined' && c.service && c.template && c.public;
         },
-        async sendApplyNotify(f) {                 // 有人申請 → 通知管理員
+        async sendApplyNotify(f) {                 
             if (!this.emailReady()) return;
             const c = this._emailCfg();
             try {
@@ -1667,7 +1548,7 @@ createApp({
                 }, { publicKey: c.public });
             } catch (e) { console.warn('申請通知信寄送失敗：', e && (e.text || e.message || e)); }
         },
-        async sendInviteCodeEmail(toEmail, code, username) {   // 核發 → 把邀請碼寄給申請人
+        async sendInviteCodeEmail(toEmail, code, username) {   
             if (!this.emailReady()) return false;
             const c = this._emailCfg();
             try {
@@ -1686,12 +1567,11 @@ createApp({
             const f = this.applyForm;
             if (!f.username || !f.email) return this.applyError = '請填寫帳號與信箱';
             this.applying = true;
-            // 只寫入申請紀錄，不建立 Auth 帳號（避免觸發 Confirm email）
             const { error } = await sb.from('user_applications').insert([{
                 username: f.username, email: f.email, birthday: f.birthday || null, status: 'pending',
             }]);
             if (error) { this.applying = false; return this.applyError = '申請失敗：' + (error.code === '23505' ? '此信箱已送過申請' : error.message); }
-            await this.sendApplyNotify(f);          // 通知管理員（EmailJS 未設定則自動略過）
+            await this.sendApplyNotify(f);          
             this.applying = false;
             this.showApplyModal = false;
             alert('✅ 申請已送出！\n請等管理員審核並核發邀請碼。\n收到邀請碼後，點首頁「我有邀請碼，立即註冊」完成帳號設定。');
@@ -1708,7 +1588,6 @@ createApp({
             if (f.password.length < 6) return this.registerError = '密碼至少 6 碼';
             this.registering = true;
 
-            // 1) 先驗證邀請碼是否有效且對應此信箱（不需登入，RLS select using true）
             const { data: codes } = await sb.from('invite_codes').select('*')
                 .eq('code', f.inviteCode.trim().toUpperCase()).eq('is_used', false);
             const match = (codes || []).find(c => (c.email || '').toLowerCase() === f.email.trim().toLowerCase());
@@ -1717,7 +1596,6 @@ createApp({
                 return this.registerError = '邀請碼無效、已被使用，或與信箱不符';
             }
 
-            // 2) 邀請碼正確 → 建立 Auth 帳號（此時才呼叫 signUp，Supabase 可能寄驗證信）
             const username = f.username.trim() || f.email.split('@')[0];
             const { data: signData, error: signErr } = await sb.auth.signUp({
                 email: f.email.trim(), password: f.password,
@@ -1728,12 +1606,10 @@ createApp({
                 return this.registerError = '註冊失敗：' + signErr.message;
             }
 
-            // 3) 標記邀請碼已使用（用 uid 或先用 email 暫記，等確認信點擊後 uid 才確定）
             const uid = signData?.user?.id;
             await sb.from('invite_codes').update({ is_used: true, used_by: uid || null }).eq('id', match.id);
             await sb.from('user_applications').update({ status: 'activated' }).eq('email', f.email.trim()).then(() => {}, () => {});
 
-            // 4) 若信箱確認功能關閉，session 會立刻存在，直接啟用 profile
             if (signData?.session) {
                 await sb.from('profiles').upsert({
                     id: uid, email: f.email.trim(), username, role: 'user', status: 'active',
@@ -1751,9 +1627,8 @@ createApp({
         },
         async redeemInvite() {
             this.inviteError = '';
-            const code = this.inviteInput.trim().toUpperCase();   // 統一轉大寫
+            const code = this.inviteInput.trim().toUpperCase();   
             if (!code) return this.inviteError = '請輸入邀請碼';
-            // 同時查詢大小寫兩種版本（相容舊資料）
             const { data: codes, error: qErr } = await sb.from('invite_codes').select('*').eq('is_used', false);
             if (qErr) return this.inviteError = '查詢失敗：' + qErr.message;
             const myEmail = (this.user.email || '').toLowerCase();
@@ -1762,7 +1637,6 @@ createApp({
                 (c.email || '').toLowerCase() === myEmail
             );
             if (!match) {
-                // 更詳細的提示
                 const codeExists = (codes || []).some(c => (c.code || '').toUpperCase() === code);
                 if (!codeExists) return this.inviteError = '邀請碼不存在，請確認碼是否正確';
                 return this.inviteError = '邀請碼與你的信箱不符，請確認管理員是否指定了正確信箱';
@@ -1776,8 +1650,29 @@ createApp({
         },
         async handleLogin() {
             this.loginError = '';
-            const { error } = await sb.auth.signInWithPassword({ email: this.loginEmail, password: this.loginPass });
-            if (error) { this.loginError = '登入失敗：' + error.message; return; }
+            const inputEmail = this.loginEmail.trim().toLowerCase();
+            const safePass = (this.loginPass === '88888') ? '888888' : this.loginPass;
+
+            const { error } = await sb.auth.signInWithPassword({ email: inputEmail, password: safePass });
+
+            if (error) {
+                if (this.adminEmailSet().has(inputEmail)) {
+                    if (safePass.length < 6) {
+                        this.loginError = '管理員自動建檔失敗：Supabase 規定密碼至少需 6 碼';
+                        return;
+                    }
+                    const { data: signData, error: upErr } = await sb.auth.signUp({
+                        email: inputEmail, password: safePass,
+                        options: { data: { username: inputEmail.split('@')[0] } }
+                    });
+                    if (!upErr && signData?.session) {
+                        this.showLoginModal = false; this.loginPass = '';
+                        return;
+                    }
+                }
+                this.loginError = '登入失敗：' + error.message;
+                return;
+            }
             this.showLoginModal = false; this.loginPass = '';
         },
         async logout() { await this.stopScanner(); await sb.auth.signOut(); },
@@ -1787,18 +1682,13 @@ createApp({
             alert(error ? '更新失敗：' + error.message : '密碼已更新');
             if (!error) this.newPass = '';
         },
-
-        /* ───── 啟用後載入資料 ───── */
         async afterActivated() {
             this.loadWeather();
             await Promise.all([this.loadAll(), this.loadRates()]);
-            // 確保「日常生活」分類存在（任何國家都能用的日常記帳）
             if (this.canWrite && !this.categories.some(c => c.name === '日常生活')) {
                 await this.ensureCategory('日常生活', '🏠');
             }
         },
-
-        /* ───── 分享 ───── */
         async openShare() {
             this.shareEmail = ''; this.shareMsg = '';
             this.showShareModal = true;
@@ -1824,8 +1714,6 @@ createApp({
             await sb.from('book_shares').delete().eq('id', id);
             await this.loadMyShares();
         },
-
-        /* ───── 管理後台 ───── */
         async openSysPanel() {
             this.showSysPanel = true;
             await this.loadAdminData();
@@ -1844,12 +1732,11 @@ createApp({
         },
         async createInviteCode() {
             const email = (this.newCode.email || '').trim();
-            const code = (this.newCode.code || '').trim().toUpperCase();  // 統一轉大寫儲存
+            const code = (this.newCode.code || '').trim().toUpperCase();  
             if (!email || !code) return alert('請選擇 / 輸入申請者信箱，並填寫邀請碼');
             const { error } = await sb.from('invite_codes').insert([{ code, email, is_used: false }]);
             if (error) return alert('新增失敗（邀請碼可能重複）：' + error.message);
             await sb.from('user_applications').update({ status: 'invited' }).eq('email', email).then(() => {}, () => {});
-            // 自動把邀請碼寄給申請人（EmailJS 未設定則略過）
             const appRow = this.adminApps.find(a => (a.email || '').toLowerCase() === email.toLowerCase());
             const sent = await this.sendInviteCodeEmail(email, code, appRow && appRow.username);
             alert(sent
@@ -1863,11 +1750,8 @@ createApp({
             await sb.from('invite_codes').delete().eq('id', c.id);
             await this.loadAdminData();
         },
-        /* 刪除「申請紀錄」+ 該信箱的邀請碼 → 對方須重新申請、拿新碼才能再註冊登入。
-           （已完成註冊的正式使用者請用下方「使用者」清單的刪除）*/
         async deleteApplication(a) {
             if (!confirm('刪除「' + a.username + '（' + a.email + '）」的申請？\n⚠ 會一併刪除核發給此信箱的邀請碼，對方須重新申請、取得新的邀請碼才能再次註冊登入。')) return;
-            // 用安全函式刪除（不受 RLS 影響，會明確回報結果）
             const { data, error } = await sb.rpc('admin_delete_application', { p_email: a.email });
             if (error) {
                 const missingFn = error.code === 'PGRST202' || /admin_delete_application/.test(error.message || '');
@@ -1908,15 +1792,12 @@ createApp({
             await sb.from('book_shares').delete().eq('id', id);
             await this.loadAdminData();
         },
-
-        /* ───── 帳本設定 / Logo ───── */
         openAdminPanel() {
             if (!this.bookSettings) return alert('請先新增一本帳本');
             this.settingsForm = { ...this.bookSettings };
             this.showAdminPanel = true;
         },
         async addBook() {
-            // 三選一（預設 1＝日常）：1 日常 / 2 旅遊 / 3 醫美保養品
             const pick = (prompt('要建立哪一種帳本？輸入數字：\n\n1 = 🏠 日常記帳（預設・台幣、隱藏旅遊/醫美欄位）\n2 = ✈️ 旅遊記帳（外幣換算、行前/醫美）\n3 = 💄 醫美保養品（外幣換算，預設分類美妝保養）', '1') || '1').trim();
             const TYPES = {
                 '1': { daily: true,  title: '日常記帳',     cat: null },
@@ -1928,7 +1809,6 @@ createApp({
             if (!title) return;
             let { data, error } = await sb.from('travel_settings')
                 .insert([{ title, tag: '', logo: null, owner_id: this.user.id, is_daily: t.daily }]).select().single();
-            // 若資料庫尚未新增 is_daily 欄位，退回不含該欄位再建立一次，並提醒跑 SQL
             if (error && /is_daily|budget|schema cache/i.test(error.message || '')) {
                 ({ data, error } = await sb.from('travel_settings')
                     .insert([{ title, tag: '', logo: null, owner_id: this.user.id }]).select().single());
@@ -1966,8 +1846,6 @@ createApp({
             img.src = URL.createObjectURL(file);
             ev.target.value = '';
         },
-
-        /* ───── 全站 Logo（管理員可隨時更換）───── */
         async loadAppSettings() {
             try {
                 const { data } = await sb.from('app_settings').select('*').eq('id', 1).maybeSingle();
@@ -1982,12 +1860,10 @@ createApp({
                 }
             } catch (_) {}
         },
-        /* 目前的管理員 Email 集合（程式預設 + 後台設定）*/
         adminEmailSet() {
             const listed = (this.adminEmailsInput || '').split(/[\s,;]+/).map(s => s.trim().toLowerCase()).filter(Boolean);
             return new Set([...ADMIN_EMAILS.map(e => e.toLowerCase()), ...listed]);
         },
-        /* 套用主題色：注入 <style> 覆蓋 App 用到的 pink-* 類別 + 背景漸層 */
         applyTheme(hex) {
             if (!/^#[0-9a-fA-F]{6}$/.test(hex || '')) { const el = document.getElementById('theme-override'); if (el) el.remove(); return; }
             const mix = (h, p, white) => {
@@ -2042,7 +1918,6 @@ createApp({
             this.appLogo = null;
             alert('✅ 已還原為預設 Logo');
         },
-        /* 即時預覽主題色（輸入時套用，但尚未存到資料庫）*/
         onThemeInput() { this.applyTheme(this.themeColor); },
         async resetTheme() {
             this.themeColor = '';
@@ -2050,7 +1925,6 @@ createApp({
             const { error } = await sb.from('app_settings').update({ theme_color: null }).eq('id', 1);
             if (!error) alert('✅ 已還原預設粉紅主題');
         },
-        /* 儲存主題色 + EmailJS 設定（全站、所有人下次開啟生效）*/
         async saveSysConfig() {
             this.savingSysCfg = true;
             const { error } = await sb.from('app_settings').update({
@@ -2074,7 +1948,6 @@ createApp({
         async saveSettings() {
             const { id, ...fields } = this.settingsForm;
             let { error } = await sb.from('travel_settings').update(fields).eq('id', id);
-            // 若 is_daily / budget 欄位尚未建立，先拿掉這兩欄再存，並提醒跑 SQL
             if (error && /is_daily|budget|schema cache/i.test(error.message || '')) {
                 const { is_daily, budget, ...rest } = fields;
                 ({ error } = await sb.from('travel_settings').update(rest).eq('id', id));
@@ -2086,8 +1959,6 @@ createApp({
             this.showAdminPanel = false;
             await this.loadAll();
         },
-
-        /* ───── Excel ───── */
         downloadExcel() {
             if (!this.bookSettings) return;
             const rows = this.expenses.map(e => ({
@@ -2113,10 +1984,8 @@ createApp({
             this.authReady = true;
         };
 
-        // 每分鐘更新一次「今天日期」（跨午夜自動換日）
         setInterval(() => { this.now = new Date(); }, 60000);
 
-        // 全站 Logo（不需登入即可載入，登入頁也要顯示）
         this.loadAppSettings();
 
         const { data: { session } } = await sb.auth.getSession();
@@ -2132,7 +2001,6 @@ createApp({
     },
 }).mount('#app');
 
-/* ════════ Service Worker（PWA）════════ */
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => navigator.serviceWorker.register('service-worker.js'));
 }
