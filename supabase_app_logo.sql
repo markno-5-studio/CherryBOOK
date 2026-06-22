@@ -19,6 +19,7 @@ alter table app_settings add column if not exists emailjs_service text;   -- Ema
 alter table app_settings add column if not exists emailjs_template text;  -- EmailJS Template ID
 alter table app_settings add column if not exists emailjs_public  text;   -- EmailJS Public Key
 alter table app_settings add column if not exists notify_email    text;   -- 申請通知信箱
+alter table app_settings add column if not exists admin_emails    text;   -- 管理員 Email 清單（逗號分隔）
 
 -- 確保有預設那一列
 insert into app_settings (id) values (1) on conflict (id) do nothing;

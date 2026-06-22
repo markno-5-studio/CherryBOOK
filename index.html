@@ -104,6 +104,10 @@
                 <span class="material-icons text-xs">photo_library</span> 相簿選圖
                 <input type="file" accept="image/*" class="hidden" @change="scanImageFile">
             </label>
+            <label :class="['text-xs px-3 py-1.5 rounded-full flex items-center gap-1 shadow-sm cursor-pointer text-white', aiScanning ? 'bg-purple-300' : 'bg-purple-500']">
+                <span class="material-icons text-xs">auto_awesome</span> {{ aiScanning ? 'AI 辨識中…' : 'AI 辨識清單' }}
+                <input type="file" accept="image/*" class="hidden" @change="aiScanReceipt" :disabled="aiScanning">
+            </label>
         </div>
         <div class="flex items-center gap-1.5">
             <button v-if="isAdmin" @click="openSysPanel" class="text-xs bg-indigo-500 text-white px-2 py-1 rounded-full flex items-center gap-1">
@@ -535,9 +539,16 @@
                 <p class="text-[10px] text-gray-400 break-all">模板變數：&#123;&#123;to_email&#125;&#125; &#123;&#123;user_name&#125;&#125; &#123;&#123;user_email&#125;&#125; &#123;&#123;invite_code&#125;&#125; &#123;&#123;site_name&#125;&#125; &#123;&#123;site_url&#125;&#125; &#123;&#123;message&#125;&#125;；To Email 需設成 &#123;&#123;to_email&#125;&#125;。</p>
             </div>
 
-            <!-- 儲存後台設定（主題色 + EmailJS）-->
+            <!-- 管理員帳號設定 -->
+            <div class="space-y-2 text-xs border rounded-xl p-3">
+                <p class="font-bold text-gray-700">🛡️ 管理員帳號（Email，多個用逗號分隔）</p>
+                <input v-model="adminEmailsInput" placeholder="markno.5.studio@gmail.com" class="w-full p-2 border rounded-lg">
+                <p class="text-[10px] text-gray-400">清單內的 Email 登入後即為管理員。新增的人「下次登入」生效。<br>密碼請各自在「設定 → 修改登入密碼」變更（預設 markno.5.studio@gmail.com / 88888）。</p>
+            </div>
+
+            <!-- 儲存後台設定（主題色 + EmailJS + 管理員）-->
             <button @click="saveSysConfig" :disabled="savingSysCfg" class="w-full bg-indigo-500 text-white py-2 rounded-lg font-bold disabled:opacity-50">
-                {{ savingSysCfg ? '儲存中…' : '💾 儲存後台設定（主題色 / EmailJS）' }}
+                {{ savingSysCfg ? '儲存中…' : '💾 儲存後台設定（主題色 / EmailJS / 管理員）' }}
             </button>
 
             <!-- 產生邀請碼 -->
@@ -745,6 +756,7 @@ createApp({
             savingAppLogo: false,
             themeColor: '',       // 主題色（管理員可設定）
             emailCfg: { service: '', template: '', public: '', notify: '' }, // EmailJS（後台可設定）
+            adminEmailsInput: '',   // 管理員 Email 清單（後台可改）
             savingSysCfg: false,
             // 申請 / 邀請
             showApplyModal: false, applying: false, applyError: '',
@@ -769,6 +781,7 @@ createApp({
             displayCurrency: 'TWD',
             // 掃描
             isScanning: false, scanner: null, showQuickForm: false, scanHint: '',
+            aiScanning: false,
             scanMode: localStorage.getItem('scanMode') || 'auto',   // 預設自動（同時認一維條碼與 QR，掃發票才讀得到）
             scanModes: [{ v: 'auto', label: '自動' }, { v: '1d', label: '一維條碼' }, { v: '2d', label: 'QR Code' }],
             torchAvailable: false, torchOn: false, videoTrack: null,
@@ -1000,13 +1013,23 @@ createApp({
             // 1) 優先用瀏覽器定位（較準）
             if (navigator.geolocation) {
                 navigator.geolocation.getCurrentPosition(
-                    (pos) => this.fetchWeather(pos.coords.latitude, pos.coords.longitude, '所在地'),
+                    (pos) => this.fetchWeatherWithName(pos.coords.latitude, pos.coords.longitude),
                     () => this.loadWeatherByIp(),   // 拒絕 / 失敗 → 用 IP 定位
                     { timeout: 8000, maximumAge: 600000 }
                 );
             } else {
                 this.loadWeatherByIp();
             }
+        },
+        /* 用座標反查地點名稱（免金鑰、支援 CORS），再抓天氣 */
+        async fetchWeatherWithName(lat, lon) {
+            let name = '所在地';
+            try {
+                const r = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=zh`);
+                const j = await r.json();
+                name = j.city || j.locality || j.principalSubdivision || j.countryName || '所在地';
+            } catch (_) {}
+            this.fetchWeather(lat, lon, name);
         },
         async loadWeatherByIp() {
             try {
@@ -1357,6 +1380,60 @@ createApp({
                 try { await h.clear(); } catch (_) {}
             }
         },
+        /* 把圖片等比縮到最長邊 maxEdge，輸出 base64（控制上傳大小與 AI 成本）*/
+        fileToResizedBase64(file, maxEdge) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.onload = () => {
+                    const scale = Math.min(1, maxEdge / Math.max(img.width, img.height));
+                    const cv = document.createElement('canvas');
+                    cv.width = Math.round(img.width * scale); cv.height = Math.round(img.height * scale);
+                    cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+                    const dataUrl = cv.toDataURL('image/jpeg', 0.85);
+                    resolve({ base64: dataUrl.split(',')[1], mediaType: 'image/jpeg' });
+                };
+                img.onerror = reject;
+                img.src = URL.createObjectURL(file);
+            });
+        },
+        /* AI 辨識收據/清單照片 → 讀出品項與金額 → 直接寫入明細 */
+        async aiScanReceipt(ev) {
+            const file = ev.target.files && ev.target.files[0];
+            ev.target.value = '';
+            if (!file) return;
+            if (!this.canWrite) { alert('此帳本僅供檢視，無法新增'); return; }
+            if (!this.currentBookId) { alert('請先選擇或新增一本帳本'); return; }
+            this.aiScanning = true;
+            try {
+                const { base64, mediaType } = await this.fileToResizedBase64(file, 1600);
+                const { data, error } = await sb.functions.invoke('ai-receipt', { body: { image: base64, mediaType } });
+                if (error) {
+                    return alert('AI 辨識失敗：' + (error.message || error) +
+                        '\n\n（若顯示找不到函式，請先到 Supabase 部署 Edge Function「ai-receipt」並設定 ANTHROPIC_API_KEY）');
+                }
+                if (data && data.error) return alert('AI 辨識失敗：' + data.error);
+                const items = (data && data.items) || [];
+                if (!items.length) return alert('AI 沒有辨識到任何品項，請換清楚一點的照片再試。');
+                const expDate = (data.date && /^\d{4}-\d{2}-\d{2}$/.test(data.date)) ? data.date : new Date().toISOString().slice(0, 10);
+                const theme = data.store || '';
+                const defCat = (this.isDaily && this.categories.some(c => c.name === '日常生活')) ? '日常生活' : '購物';
+                const rows = items.map(it => ({
+                    book_id: this.currentBookId, item_name: it.name,
+                    amount: it.amount || null, amount_twd: it.amount || null, currency: 'TWD',
+                    category: defCat, expense_date: expDate, day_theme: theme,
+                    is_prepaid: false, is_medical: false, barcode: '',
+                }));
+                const { error: insErr } = await sb.from('travel_expenses').insert(rows);
+                if (insErr) return alert('寫入失敗：' + insErr.message);
+                await this.loadAll();
+                const total = rows.reduce((s, r) => s + (r.amount || 0), 0);
+                alert('✅ AI 已辨識並新增 ' + rows.length + ' 筆' + (theme ? ('（' + theme + '）') : '') + '，合計 NT$' + this.formatNumber(total));
+            } catch (e) {
+                alert('AI 辨識發生錯誤：' + e);
+            } finally {
+                this.aiScanning = false;
+            }
+        },
         syncAmountStrings() {
             this.form.amountStr = this.form.amount != null ? String(this.form.amount) : '';
             this.form.amountTwdStr = this.form.amount_twd != null ? String(this.form.amount_twd) : '';
@@ -1537,7 +1614,7 @@ createApp({
             let { data: prof } = await sb.from('profiles').select('*').eq('id', uid).maybeSingle();
             if (!prof) {
                 const meta = this.user.user_metadata || {};
-                const isAdminEmail = ADMIN_EMAILS.includes(email.toLowerCase());
+                const isAdminEmail = this.adminEmailSet().has(email.toLowerCase());
                 const row = {
                     id: uid, email,
                     username: meta.username || email.split('@')[0],
@@ -1901,8 +1978,14 @@ createApp({
                         service: data.emailjs_service || '', template: data.emailjs_template || '',
                         public: data.emailjs_public || '', notify: data.notify_email || '',
                     };
+                    this.adminEmailsInput = data.admin_emails || ADMIN_EMAILS.join(', ');
                 }
             } catch (_) {}
+        },
+        /* 目前的管理員 Email 集合（程式預設 + 後台設定）*/
+        adminEmailSet() {
+            const listed = (this.adminEmailsInput || '').split(/[\s,;]+/).map(s => s.trim().toLowerCase()).filter(Boolean);
+            return new Set([...ADMIN_EMAILS.map(e => e.toLowerCase()), ...listed]);
         },
         /* 套用主題色：注入 <style> 覆蓋 App 用到的 pink-* 類別 + 背景漸層 */
         applyTheme(hex) {
@@ -1976,6 +2059,7 @@ createApp({
                 emailjs_template: this.emailCfg.template || null,
                 emailjs_public: this.emailCfg.public || null,
                 notify_email: this.emailCfg.notify || null,
+                admin_emails: this.adminEmailsInput || null,
             }).eq('id', 1);
             this.savingSysCfg = false;
             if (error) {
@@ -1985,7 +2069,7 @@ createApp({
                 return alert('儲存失敗：' + error.message);
             }
             this.applyTheme(this.themeColor);
-            alert('✅ 後台設定已儲存（主題色／EmailJS）');
+            alert('✅ 後台設定已儲存（主題色／EmailJS／管理員）\n\n※ 新增的管理員 Email：對方下次登入即生效。');
         },
         async saveSettings() {
             const { id, ...fields } = this.settingsForm;
