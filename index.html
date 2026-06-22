@@ -81,7 +81,7 @@
 
 <!-- ════════ C. 正式 App（已啟用 / 管理員）════════ -->
 <template v-else>
-<template v-if="bookSettings || isAdmin">
+<template v-if="isActive">
 
     <!-- ───── 內建瀏覽器警告（相機無法對焦）───── -->
     <div v-if="isInAppBrowser" class="mb-2 p-2.5 rounded-xl bg-amber-100 text-amber-800 text-[11px] leading-relaxed border border-amber-200">
@@ -1545,6 +1545,14 @@ createApp({
                     role: isAdminEmail ? 'admin' : 'user',
                     status: isAdminEmail ? 'active' : 'pending',
                 };
+                // 若此帳號註冊時已用掉邀請碼（used_by = 本人），即使是「確認信」流程也直接啟用，
+                // 避免確認信點完登入後又卡在「輸入邀請碼」（且碼已被標記使用）。
+                if (!isAdminEmail) {
+                    try {
+                        const { data: codes } = await sb.from('invite_codes').select('id').eq('used_by', uid).limit(1);
+                        if (codes && codes.length) row.status = 'active';
+                    } catch (_) {}
+                }
                 const { data: inserted } = await sb.from('profiles').insert(row).select().maybeSingle();
                 prof = inserted || row;
             }
