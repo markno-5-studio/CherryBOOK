@@ -1299,10 +1299,13 @@ createApp({
                 const { base64, mediaType } = await this.fileToResizedBase64(file, 1600);
                 const { data, error } = await sb.functions.invoke('ai-receipt', { body: { image: base64, mediaType } });
                 if (error) {
-                    return alert('AI 辨識失敗：' + (error.message || error) +
-                        '\n\n（若顯示找不到函式，請先到 Supabase 部署 Edge Function「ai-receipt」並設定 GEMINI_API_KEY）');
+                    // 嘗試讀出函式回傳的真正錯誤內容
+                    let detail = error.message || String(error);
+                    try { if (error.context && error.context.json) { const b = await error.context.json(); if (b && b.error) detail = b.error; } } catch (_) {}
+                    return alert('AI 辨識失敗：' + detail +
+                        '\n\n（找不到函式→請先部署 Edge Function「ai-receipt」；尚未設定 GEMINI_API_KEY→到 Edge Functions → Secrets 新增）');
                 }
-                if (data && data.error) return alert('AI 辨識失敗：' + data.error);
+                if (data && data.error) return alert('AI 辨識失敗：' + data.error + (data.raw ? ('\n\n原始回應：' + data.raw) : ''));
                 const items = (data && data.items) || [];
                 if (!items.length) return alert('AI 沒有辨識到任何品項，請換清楚一點的照片再試。');
                 const expDate = (data.date && /^\d{4}-\d{2}-\d{2}$/.test(data.date)) ? data.date : new Date().toISOString().slice(0, 10);
