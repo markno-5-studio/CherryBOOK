@@ -321,6 +321,9 @@
                             <button v-if="canWrite" @click.stop="translateGroup(group)" :disabled="translating" class="text-gray-300 hover:text-pink-500" title="品名翻譯成繁體中文">
                                 <span class="material-icons text-[14px]">translate</span>
                             </button>
+                            <button v-if="canWrite" @click.stop="deleteGroup(group)" class="text-red-300 hover:text-red-600" title="刪除這一整天的所有紀錄">
+                                <span class="material-icons text-[14px]">delete_sweep</span>
+                            </button>
                         </h3>
                         <p class="text-xs text-gray-400">{{ group.items.length }} 筆消費</p>
                     </div>
@@ -598,9 +601,9 @@
                     <input type="checkbox" v-model="settingsForm.is_daily">
                     <span>🏠 日常生活記帳模式（預設台幣、隱藏旅遊/醫美欄位）</span>
                 </label>
-                <div class="flex items-center gap-2">
-                    <span class="shrink-0">💰 總預算（台幣，留空＝不設定）</span>
-                    <input v-model.number="settingsForm.budget" type="number" inputmode="decimal" placeholder="例如 30000" class="flex-1 p-2 border rounded-lg">
+                <div class="space-y-1">
+                    <span class="block">💰 總預算（台幣，留空＝不設定）</span>
+                    <input v-model.number="settingsForm.budget" type="number" inputmode="decimal" placeholder="例如 30000" class="w-full p-2 border rounded-lg">
                 </div>
             </div>
 
@@ -1016,6 +1019,16 @@ createApp({
             if (!confirm('確定刪除這筆消費？')) return;
             await sb.from('travel_expenses').delete().eq('id', id);
             await this.loadAll();
+        },
+        /* 刪除整天（整個分組）的所有紀錄 */
+        async deleteGroup(group) {
+            if (!this.canWrite) return alert('此帳本僅供檢視，無法刪除');
+            if (!confirm('確定刪除「' + group.label + '」這一整天的全部 ' + group.items.length + ' 筆紀錄？\n⚠ 無法復原！')) return;
+            const ids = group.items.map(i => i.id);
+            const { error } = await sb.from('travel_expenses').delete().in('id', ids);
+            if (error) return alert('刪除失敗：' + error.message);
+            await this.loadAll();
+            alert('✅ 已刪除 ' + ids.length + ' 筆');
         },
         async editDayTheme(group) {
             const t = prompt('修改 ' + group.label + ' 的當日主題（支援 Emoji）', group.theme);
@@ -1960,23 +1973,27 @@ createApp({
         },
         async saveSysConfig() {
             this.savingSysCfg = true;
-            const { error } = await sb.from('app_settings').update({
+            const full = {
                 theme_color: this.themeColor || null,
                 emailjs_service: this.emailCfg.service || null,
                 emailjs_template: this.emailCfg.template || null,
                 emailjs_public: this.emailCfg.public || null,
                 notify_email: this.emailCfg.notify || null,
                 admin_emails: this.adminEmailsInput || null,
-            }).eq('id', 1);
-            this.savingSysCfg = false;
-            if (error) {
-                if (/column|schema cache|app_settings/i.test(error.message || '')) {
-                    return alert('❌ 資料表缺欄位！請先到 Supabase SQL Editor 執行最新版 supabase_app_logo.sql 後再試。\n\n' + error.message);
-                }
-                return alert('儲存失敗：' + error.message);
+            };
+            let { error } = await sb.from('app_settings').update(full).eq('id', 1);
+            let noAdminCol = false;
+            // 若 admin_emails 欄位尚未建立，先拿掉它再存（其他設定照常儲存）
+            if (error && /admin_emails|column|schema cache/i.test(error.message || '')) {
+                const { admin_emails, ...rest } = full;
+                ({ error } = await sb.from('app_settings').update(rest).eq('id', 1));
+                noAdminCol = !error;
             }
+            this.savingSysCfg = false;
+            if (error) return alert('儲存失敗：' + error.message);
             this.applyTheme(this.themeColor);
-            alert('✅ 後台設定已儲存（主題色／EmailJS／管理員）\n\n※ 新增的管理員 Email：對方下次登入即生效。');
+            alert('✅ 後台設定已儲存（主題色／EmailJS' + (noAdminCol ? '' : '／管理員') + '）' +
+                (noAdminCol ? '\n\n⚠ 「管理員 Email」尚未存（資料表缺 admin_emails 欄位，請跑 supabase_app_logo.sql）；其餘已存好。' : '\n\n※ 新增的管理員 Email：對方下次登入即生效。'));
         },
         async saveSettings() {
             const { id, ...fields } = this.settingsForm;
